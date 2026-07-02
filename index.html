@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Libretto">
 <link rel="manifest" href="manifest.webmanifest">
-<title>Libretto v12 — le tue finanze</title>
+<title>Libretto v13 — le tue finanze</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Source+Sans+3:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
@@ -354,21 +354,58 @@ function salaryDates(){
     .filter(d=>{ const k=dateKey(d); if(seen.has(k)) return false; seen.add(k); return true; });
 }
 function fallbackCycleStart(year,month){ return new Date(year,month,1); }
+function sameMonthKey(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
+function addOneSalaryMonth(start){
+  const y=start.getFullYear(), m=start.getMonth()+1, day=start.getDate();
+  return new Date(y,m,Math.min(day,lastDayOfMonth(y,m)));
+}
+function estimateNextSalaryAfter(start){
+  const dates=salaryDates();
+  const next=dates.find(d=>d>start);
+  if(next) return next;
+  // Se lo stipendio successivo non è ancora registrato, stima la prossima data
+  // mantenendo il giorno dello stipendio più recente. Questo evita di tornare al mese solare.
+  return addOneSalaryMonth(start);
+}
+function latestSalaryStart(refDate=new Date()){
+  const today=dayStart(refDate);
+  const dates=salaryDates();
+  let latest=null;
+  for(const d of dates){ if(d<=today) latest=d; else break; }
+  if(!latest && dates.length) latest=dates[dates.length-1];
+  return latest;
+}
 function cycleStartForKey(year,month){
+  // Per i mesi storici/selezionati usa la data reale dello stipendio in quel mese, se presente.
   const exact=salaryDates().find(d=>d.getFullYear()===year && d.getMonth()===month);
   return exact || fallbackCycleStart(year,month);
 }
-function nextSalaryAfter(start){ return salaryDates().find(d=>d>start) || null; }
+function nextSalaryAfter(start){ return estimateNextSalaryAfter(start); }
 function periodBounds(year,month){
   const start=cycleStartForKey(year,month);
-  const next=nextSalaryAfter(start);
-  const end=next ? new Date(next.getTime()-1) : new Date(new Date(start.getFullYear(),start.getMonth()+1,start.getDate()).getTime()-1);
+  const next=estimateNextSalaryAfter(start);
+  const end=new Date(next.getTime()-1);
   return {start, end};
 }
-function periodLabel(year,month){
-  const b=periodBounds(year,month);
+function currentSalaryPeriodBounds(){
+  const start=latestSalaryStart();
+  if(!start){
+    const fallback=fallbackCycleStart(viewYear,viewMonth);
+    const end=new Date(new Date(fallback.getFullYear(),fallback.getMonth()+1,1).getTime()-1);
+    return {start:fallback,end,estimated:false,hasSalary:false};
+  }
+  const dates=salaryDates();
+  const realNext=dates.find(d=>d>start) || null;
+  const next=realNext || estimateNextSalaryAfter(start);
+  return {start,end:new Date(next.getTime()-1),estimated:!realNext,hasSalary:true};
+}
+function periodLabelFromBounds(b){
   const fmt=d=>d.toLocaleDateString('it-IT',{day:'2-digit',month:'short'});
   return `${fmt(b.start)} – ${fmt(b.end)} ${b.end.getFullYear()}`;
+}
+function periodLabel(year,month){ return periodLabelFromBounds(periodBounds(year,month)); }
+function txInBounds(bounds){
+  return state.transactions.filter(tx=>{ const d=dayStart(parseISODate(tx.date)); return d>=bounds.start && d<=bounds.end; });
 }
 function periodKeyFromDate(dateLike){
   const d=dayStart(parseISODate(dateLike));
@@ -386,22 +423,13 @@ function availableCycleKeys(includeAroundView=true){
   }
   return [...keys].sort();
 }
-
 function latestSalaryCycleKey(){
-  const today=dayStart(new Date());
-  const starts=salaryDates();
-  let latest=null;
-  for(const d of starts){
-    if(d<=today) latest=d;
-    else break;
-  }
-  // Se non c'è ancora uno stipendio passato, usa l'ultimo stipendio registrato; se manca del tutto, resta sul ciclo selezionato.
-  if(!latest && starts.length) latest=starts[starts.length-1];
+  const latest=latestSalaryStart();
   return latest ? monthKeyFromDate(latest) : `${viewYear}-${String(viewMonth+1).padStart(2,'0')}`;
 }
 function activeDashboardCycle(){
-  const [y,m]=latestSalaryCycleKey().split('-').map(Number);
-  return {year:y, month:m-1};
+  const b=currentSalaryPeriodBounds();
+  return {year:b.start.getFullYear(), month:b.start.getMonth(), bounds:b};
 }
 
 /* ============ SEED DATA ============ */
@@ -476,7 +504,7 @@ function importBackupFile(file){
 
 /* ============ DERIVED DATA ============ */
 function txInMonth(year,month){ return txInPeriod(year,month); }
-function txInPeriod(year,month){ const b=periodBounds(year,month); return state.transactions.filter(tx=>{ const d=new Date(tx.date); return d>=b.start && d<=b.end; }); }
+function txInPeriod(year,month){ return txInBounds(periodBounds(year,month)); }
 function spentByCategory(txs){ const m={}; txs.filter(t=>t.type==='out'&&t.movementType!=='transfer').forEach(t=>{ m[t.category]=(m[t.category]||0)+t.amount; }); return m; }
 function isTransfer(t){ return t.movementType==='transfer'; }
 function isRealExpense(t){ return t.type==='out' && !isTransfer(t); }
@@ -674,7 +702,7 @@ function budgetSummaryHTML(txs, compact=false){
 /* ============ DASHBOARD ============ */
 function renderDashboard(){
   const dash=activeDashboardCycle();
-  const txs=txInPeriod(dash.year,dash.month);
+  const txs=txInBounds(dash.bounds);
   const income=txs.filter(t=>t.type==='in'&&!isTransfer(t)).reduce((s,t)=>s+t.amount,0);
   const expense=txs.filter(isRealExpense).reduce((s,t)=>s+t.amount,0);
   const totalBalance=totalAccountBalance();
@@ -685,7 +713,7 @@ function renderDashboard(){
   const recurring=detectRecurring();
   const recent=[...state.transactions].sort((a,b)=>a.date<b.date?1:-1).slice(0,8);
   return `
-  <div class="topbar"><h1>Dashboard</h1><div class="month-switch"><div class="label" title="Ciclo corrente basato sullo stipendio più recente">${periodLabel(dash.year,dash.month)}</div></div></div>
+  <div class="topbar"><h1>Dashboard</h1><div class="month-switch"><div class="label" title="Ciclo corrente basato sullo stipendio più recente">${periodLabelFromBounds(dash.bounds)}</div></div></div>
   ${alertsHTML(dash.year,dash.month)}
   <div class="grid kpis">
     <div class="card kpi"><div class="label">Saldo totale</div><div class="value num">${fmtEUR(totalBalance)}</div><div class="delta">su ${state.accounts.length} conti</div></div>
@@ -811,13 +839,13 @@ function renderTransactions(){
 /* ============ BUDGET ============ */
 function renderBudget(){
   const budgetCycle=activeDashboardCycle();
-  const txs=txInPeriod(budgetCycle.year,budgetCycle.month);
+  const txs=txInBounds(budgetCycle.bounds);
   const byCat=spentByCategory(txs);
   return `
-  <div class="topbar"><h1>Budget</h1><div class="month-switch"><div class="label" title="Ciclo corrente basato sullo stipendio più recente">${periodLabel(budgetCycle.year,budgetCycle.month)}</div></div></div>
+  <div class="topbar"><h1>Budget</h1><div class="month-switch"><div class="label" title="Ciclo corrente basato sullo stipendio più recente">${periodLabelFromBounds(budgetCycle.bounds)}</div></div></div>
   <div class="card" style="margin-bottom:16px;">
     <h3>Ciclo budget dinamico</h3>
-    <div class="empty" style="text-align:left;padding:0;">Il budget viene calcolato automaticamente dalla data dello <strong>Stipendio più recente registrato</strong> fino al giorno prima dello stipendio successivo. Ciclo corrente: <strong>${periodLabel(budgetCycle.year,budgetCycle.month)}</strong>. Se non esiste ancora nessuno stipendio registrato, l'app usa temporaneamente il mese selezionato.</div>
+    <div class="empty" style="text-align:left;padding:0;">Il budget viene calcolato automaticamente dalla data dello <strong>Stipendio più recente registrato</strong> fino al giorno prima dello stipendio successivo. Ciclo corrente: <strong>${periodLabelFromBounds(budgetCycle.bounds)}</strong>. Se non esiste ancora nessuno stipendio registrato, l'app usa temporaneamente il mese selezionato.</div>
   </div>
   ${alertsHTML(budgetCycle.year,budgetCycle.month)}
   <div class="card budget-table">
