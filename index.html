@@ -240,6 +240,14 @@
   .compat-card b{display:block;color:var(--cream);margin-bottom:4px;}
   @media(max-width:760px){.compat-grid{grid-template-columns:1fr}.main{padding-bottom:calc(90px + env(safe-area-inset-bottom));}.fab{right:18px;bottom:calc(18px + env(safe-area-inset-bottom));}.modal-bg{align-items:flex-end;padding:12px;padding-bottom:calc(12px + env(safe-area-inset-bottom));}.modal{max-height:88vh;border-radius:16px 16px 12px 12px;}.budget-table .cat-row{flex-wrap:wrap}.budget-table .cat-info{width:100%}.budget-table .nums{width:100%;text-align:left}.tx .amount{font-size:13px}.month-switch .label{min-width:150px}.card{padding:18px 16px}}
 
+
+  /* cloud multi-user */
+  .cloud-status{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:12px 14px;border-radius:12px;background:var(--surface-2);border:1px solid var(--line);font-size:13.5px;color:var(--cream-dim);margin-bottom:14px;}
+  .cloud-dot{width:10px;height:10px;border-radius:50%;background:var(--cream-dim);flex-shrink:0;}
+  .cloud-dot.on{background:var(--sage);}
+  .cloud-dot.off{background:var(--coral);}
+  .code-block{white-space:pre-wrap;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:12px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.45;color:var(--cream-dim);overflow:auto;max-height:280px;}
+
   .prompt-box{width:100%;min-height:160px;background:var(--surface-2);border:1px solid var(--line);color:var(--cream);padding:12px;border-radius:9px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.45;resize:vertical;}
 
 </style>
@@ -265,10 +273,11 @@
       <button class="navbtn" data-page="goals">🏺 Obiettivi</button>
       <button class="navbtn" data-page="accounts">🏦 Conti</button>
       <button class="navbtn" data-page="categories">🏷 Categorie</button>
+      <button class="navbtn" data-page="cloud">👥 Utenti / Cloud</button>
       <button class="navbtn" data-page="help">❓ Help</button>
     </nav>
     <div class="sidebar-foot">
-      <div>I tuoi dati restano salvati<br>nel browser di questo dispositivo.</div>
+      <div>Dati locali nel browser.<br>Cloud opzionale per più utenti.</div>
       <div style="display:flex;flex-direction:column;gap:7px;margin-top:12px;">
         <button class="btn small ghost" id="exportBackupBtn" type="button">⬇️ Esporta backup</button>
         <button class="btn small ghost" id="importBackupBtn" type="button">⬆️ Importa backup</button>
@@ -283,6 +292,7 @@
 <div id="modalRoot"></div>
 <div id="toastRoot"></div>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 /* ============ DEFAULT DATA ============ */
 const DEFAULT_CATEGORIES = [
@@ -460,7 +470,48 @@ function seedTransactions(){
 
 /* ============ PERSISTENCE — STANDALONE BROWSER ============ */
 const STORAGE_KEY = 'libretto-v2-standalone-state';
+const CLOUD_CONFIG_KEY = 'libretto-cloud-config';
+let cloud = {client:null,user:null,ready:false,loading:false};
+let cloudSaveTimer=null;
+function getCloudConfig(){
+  try{ return JSON.parse(localStorage.getItem(CLOUD_CONFIG_KEY)||'{}'); }catch(e){ return {}; }
+}
+function hasCloudConfig(){ const c=getCloudConfig(); return !!(c.url&&c.anonKey); }
+function cloudStatusText(){
+  if(!hasCloudConfig()) return 'Cloud non configurato: uso locale';
+  if(cloud.user) return `Cloud attivo · ${cloud.user.email||cloud.user.id}`;
+  return 'Cloud configurato, login non effettuato';
+}
+async function initCloud(){
+  if(!window.supabase || !hasCloudConfig()) return false;
+  const cfg=getCloudConfig();
+  try{
+    cloud.client=window.supabase.createClient(cfg.url,cfg.anonKey);
+    const {data}=await cloud.client.auth.getSession();
+    cloud.user=data&&data.session?data.session.user:null;
+    cloud.ready=true;
+    cloud.client.auth.onAuthStateChange(async (_event, session)=>{
+      cloud.user=session?session.user:null;
+      if(cloud.user){ await loadState(); render(); }
+      else { render(); }
+    });
+    return true;
+  }catch(e){ console.warn('Cloud non inizializzato',e); return false; }
+}
 async function loadState(){
+  // Se c'è un utente cloud loggato, il cloud diventa fonte primaria.
+  if(cloud.client && cloud.user){
+    try{
+      cloud.loading=true;
+      const {data,error}=await cloud.client.from('libretto_profiles').select('data').eq('user_id',cloud.user.id).maybeSingle();
+      if(error && error.code!=='PGRST116') throw error;
+      if(data && data.data){ state=Object.assign(state,data.data); migrateState(); localStorage.setItem(STORAGE_KEY,JSON.stringify(state)); cloud.loading=false; return true; }
+      // Primo accesso: usa lo stato locale/semi-demo e lo crea nel cloud.
+      const raw=localStorage.getItem(STORAGE_KEY) || localStorage.getItem('libretto-state2');
+      if(raw){ state=Object.assign(state,JSON.parse(raw)); migrateState(); }
+      cloud.loading=false; await cloudSaveNow(); return !!raw;
+    }catch(e){ cloud.loading=false; console.warn('Impossibile leggere dal cloud, uso locale', e); toast('Cloud non disponibile: uso dati locali'); }
+  }
   try{
     const raw=localStorage.getItem(STORAGE_KEY) || localStorage.getItem('libretto-state2');
     if(raw){ const p=JSON.parse(raw); state=Object.assign(state,p); migrateState(); return true; }
@@ -474,11 +525,26 @@ function saveState(){
     try{ localStorage.setItem(STORAGE_KEY,JSON.stringify(state)); }
     catch(e){ console.warn('Impossibile salvare i dati', e); toast('Salvataggio non riuscito: spazio browser esaurito?'); }
   },150);
+  scheduleCloudSave();
 }
-function forceSaveState(){ try{ localStorage.setItem(STORAGE_KEY,JSON.stringify(state)); return true; }catch(e){ console.warn(e); return false; } }
+function forceSaveState(){ try{ localStorage.setItem(STORAGE_KEY,JSON.stringify(state)); scheduleCloudSave(50); return true; }catch(e){ console.warn(e); return false; } }
+function scheduleCloudSave(delay=900){
+  if(!cloud.client || !cloud.user || cloud.loading) return;
+  clearTimeout(cloudSaveTimer);
+  cloudSaveTimer=setTimeout(()=>cloudSaveNow(),delay);
+}
+async function cloudSaveNow(){
+  if(!cloud.client || !cloud.user) return false;
+  try{
+    const payload={user_id:cloud.user.id,data:state,updated_at:new Date().toISOString()};
+    const {error}=await cloud.client.from('libretto_profiles').upsert(payload,{onConflict:'user_id'});
+    if(error) throw error;
+    return true;
+  }catch(e){ console.warn('Salvataggio cloud non riuscito',e); return false; }
+}
 function exportBackup(){
   forceSaveState();
-  const payload={app:'Libretto',version:'12.0-mobile-pwa-ready',exportedAt:new Date().toISOString(),state};
+  const payload={app:'Libretto',version:'14.0-multiuser-supabase-ready',exportedAt:new Date().toISOString(),state};
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');
@@ -927,6 +993,53 @@ function renderCategories(){
 }
 
 
+
+/* ============ CLOUD / MULTI-USER PAGE ============ */
+function renderCloud(){
+  const cfg=getCloudConfig();
+  const logged=!!cloud.user;
+  const sql=`create table if not exists public.libretto_profiles (\n  user_id uuid primary key references auth.users(id) on delete cascade,\n  data jsonb not null default '{}'::jsonb,\n  updated_at timestamptz not null default now()\n);\n\nalter table public.libretto_profiles enable row level security;\n\ncreate policy "Users can read own Libretto data"\non public.libretto_profiles for select\nusing (auth.uid() = user_id);\n\ncreate policy "Users can insert own Libretto data"\non public.libretto_profiles for insert\nwith check (auth.uid() = user_id);\n\ncreate policy "Users can update own Libretto data"\non public.libretto_profiles for update\nusing (auth.uid() = user_id)\nwith check (auth.uid() = user_id);`;
+  return `
+  <div class="topbar"><h1>Utenti / Cloud</h1></div>
+  <div class="cloud-status"><span class="cloud-dot ${logged?'on':'off'}"></span><span>${escapeHTML(cloudStatusText())}</span></div>
+  <div class="grid row2" style="margin-bottom:16px;">
+    <div class="card">
+      <h3>Accesso utente</h3>
+      ${!hasCloudConfig()?`<div class="empty" style="text-align:left;padding-top:0">Configura Supabase qui sotto, poi potrai creare utenti e salvare i dati separatamente per ciascun account.</div>`:''}
+      ${logged?`
+        <div class="empty" style="text-align:left;padding-top:0">Sei collegato come <b>${escapeHTML(cloud.user.email||cloud.user.id)}</b>. Ogni modifica viene salvata sia localmente sia nel database cloud del tuo utente.</div>
+        <div class="modal-actions"><button class="btn ghost" id="cloudPullBtn">↻ Ricarica dal cloud</button><button class="btn" id="cloudPushBtn">☁️ Salva ora nel cloud</button><button class="btn danger" id="cloudLogoutBtn">Esci</button></div>
+      `:`
+        <div class="field"><label>Email</label><input type="email" id="cloudEmail" placeholder="nome@email.com"></div>
+        <div class="field"><label>Password</label><input type="password" id="cloudPassword" placeholder="Minimo 6 caratteri"></div>
+        <div class="modal-actions"><button class="btn ghost" id="cloudSignupBtn">Crea account</button><button class="btn" id="cloudLoginBtn">Accedi</button></div>
+      `}
+    </div>
+    <div class="card">
+      <h3>Configurazione Supabase</h3>
+      <div class="field"><label>Project URL</label><input type="text" id="supabaseUrl" value="${escapeHTML(cfg.url||'')}" placeholder="https://xxxxx.supabase.co"></div>
+      <div class="field"><label>Anon public key</label><input type="password" id="supabaseAnon" value="${escapeHTML(cfg.anonKey||'')}" placeholder="eyJhbGciOi..."></div>
+      <div class="modal-actions"><button class="btn" id="saveCloudConfigBtn">Salva configurazione</button><button class="btn ghost" id="clearCloudConfigBtn">Rimuovi</button></div>
+      <div class="empty" style="text-align:left">La anon key è pubblica per definizione; la sicurezza vera è data dalle policy RLS sotto.</div>
+    </div>
+  </div>
+  <div class="card" style="margin-bottom:16px;">
+    <h3>Schema database da creare in Supabase</h3>
+    <div class="empty" style="text-align:left;padding-top:0">In Supabase apri <b>SQL Editor</b>, incolla questo blocco e premi Run. Ogni utente potrà leggere/modificare solo la propria riga.</div>
+    <div class="code-block">${escapeHTML(sql)}</div>
+    <div class="modal-actions" style="max-width:260px"><button class="btn ghost" id="copySqlBtn">📋 Copia SQL</button></div>
+  </div>
+  <div class="card">
+    <h3>Come funziona</h3>
+    <ul class="tech-list">
+      <li>Ogni account Supabase/Auth ha un proprio <span class="num">user_id</span>.</li>
+      <li>I dati Libretto vengono salvati in una riga JSON separata per utente.</li>
+      <li>Le policy RLS impediscono a un utente di leggere o modificare i dati degli altri.</li>
+      <li>Il backup JSON resta disponibile come sicurezza aggiuntiva.</li>
+    </ul>
+  </div>`;
+}
+
 /* ============ HELP PAGE ============ */
 function renderHelp(){
   return `
@@ -946,7 +1059,7 @@ function renderHelp(){
       <h3>Stato app / note tecniche</h3>
       <ul class="tech-list">
         <li>Single-file HTML/CSS/JS standalone, pronta anche per pubblicazione web.</li>
-        <li>Persistenza dati con <span class="num">localStorage</span> del browser.</li>
+        <li>Persistenza locale con <span class="num">localStorage</span>; cloud multiutente opzionale con Supabase.</li>
         <li>Saldi conto calcolati da saldo iniziale + movimenti.</li>
         <li>Supporto a entrate, uscite e trasferimenti tra conti.</li>
         <li>Ciclo budget/dashboard basato sullo Stipendio più recente.</li>
@@ -976,7 +1089,7 @@ function renderHelp(){
   </div>
   <div class="card">
     <h3>Come chiedere nuove modifiche</h3>
-    <div class="empty" style="text-align:left;padding-top:0">Usa “Prompt update”, descrivi la modifica desiderata e allega il file HTML esportato. Specifica sempre di mantenere intatti salvataggio, saldi derivati, ciclo stipendio e dati già presenti in localStorage.</div>
+    <div class="empty" style="text-align:left;padding-top:0">Usa “Prompt update”, descrivi la modifica desiderata e allega il file HTML esportato. Specifica sempre di mantenere intatti salvataggio locale/cloud, saldi derivati, ciclo stipendio e dati già presenti.</div>
   </div>`;
 }
 
@@ -991,6 +1104,7 @@ function render(){
     else if(currentPage==='goals') main.innerHTML=renderGoals();
     else if(currentPage==='accounts') main.innerHTML=renderAccounts();
     else if(currentPage==='categories') main.innerHTML=renderCategories();
+    else if(currentPage==='cloud') main.innerHTML=renderCloud();
     else if(currentPage==='help') main.innerHTML=renderHelp();
     bindPageEvents();
   }catch(e){
@@ -1043,6 +1157,34 @@ function bindPageEvents(){
 
 
 
+
+
+  // CLOUD / MULTI-USER
+  const saveCloudConfigBtn=document.getElementById('saveCloudConfigBtn');
+  if(saveCloudConfigBtn) saveCloudConfigBtn.addEventListener('click',async()=>{
+    const url=(document.getElementById('supabaseUrl').value||'').trim();
+    const anonKey=(document.getElementById('supabaseAnon').value||'').trim();
+    if(!url||!anonKey){ toast('Inserisci URL e anon key Supabase'); return; }
+    localStorage.setItem(CLOUD_CONFIG_KEY,JSON.stringify({url,anonKey}));
+    await initCloud(); render(); toast('Cloud configurato');
+  });
+  const clearCloudConfigBtn=document.getElementById('clearCloudConfigBtn');
+  if(clearCloudConfigBtn) clearCloudConfigBtn.addEventListener('click',async()=>{
+    if(cloud.client) try{ await cloud.client.auth.signOut(); }catch(e){}
+    localStorage.removeItem(CLOUD_CONFIG_KEY); cloud={client:null,user:null,ready:false,loading:false}; render(); toast('Configurazione cloud rimossa');
+  });
+  const cloudLoginBtn=document.getElementById('cloudLoginBtn');
+  if(cloudLoginBtn) cloudLoginBtn.addEventListener('click',async()=>cloudAuth('login'));
+  const cloudSignupBtn=document.getElementById('cloudSignupBtn');
+  if(cloudSignupBtn) cloudSignupBtn.addEventListener('click',async()=>cloudAuth('signup'));
+  const cloudLogoutBtn=document.getElementById('cloudLogoutBtn');
+  if(cloudLogoutBtn) cloudLogoutBtn.addEventListener('click',async()=>{ if(cloud.client) await cloud.client.auth.signOut(); cloud.user=null; render(); toast('Logout effettuato'); });
+  const cloudPullBtn=document.getElementById('cloudPullBtn');
+  if(cloudPullBtn) cloudPullBtn.addEventListener('click',async()=>{ await loadState(); render(); toast('Dati ricaricati dal cloud'); });
+  const cloudPushBtn=document.getElementById('cloudPushBtn');
+  if(cloudPushBtn) cloudPushBtn.addEventListener('click',async()=>{ const ok=await cloudSaveNow(); toast(ok?'Dati salvati nel cloud':'Salvataggio cloud non riuscito'); });
+  const copySqlBtn=document.getElementById('copySqlBtn');
+  if(copySqlBtn) copySqlBtn.addEventListener('click',()=>{ const txt=document.querySelector('.code-block')?.textContent||''; navigator.clipboard.writeText(txt).then(()=>toast('SQL copiato')); });
 
   // HELP
   const chatgptBtn=document.getElementById('openChatGPTBtn');
@@ -1108,6 +1250,25 @@ function bindPageEvents(){
   const addAcctBtn=document.getElementById('addAcctBtn');
   if(addAcctBtn) addAcctBtn.addEventListener('click',()=>openAccountModal(null));
   document.querySelectorAll('[data-editacct]').forEach(b=>b.addEventListener('click',()=>openAccountModal(b.dataset.editacct))); 
+}
+
+
+async function cloudAuth(mode){
+  if(!cloud.client){ toast('Prima salva la configurazione Supabase'); return; }
+  const email=(document.getElementById('cloudEmail')?.value||'').trim();
+  const password=(document.getElementById('cloudPassword')?.value||'').trim();
+  if(!email||!password){ toast('Inserisci email e password'); return; }
+  try{
+    const res = mode==='signup'
+      ? await cloud.client.auth.signUp({email,password})
+      : await cloud.client.auth.signInWithPassword({email,password});
+    if(res.error) throw res.error;
+    cloud.user=res.data.user || (res.data.session&&res.data.session.user) || cloud.user;
+    await loadState();
+    saveState();
+    render();
+    toast(mode==='signup'?'Account creato. Controlla eventuale email di conferma.':'Accesso effettuato');
+  }catch(e){ console.warn(e); toast(e.message||'Accesso non riuscito'); }
 }
 
 /* ============ REMOVE TX HELPER ============ */
@@ -1329,7 +1490,7 @@ function currentHtmlSource(){
 }
 
 function buildUpdatePrompt(includeHtml=true){
-  const base = `Sto sviluppando una single-file web app HTML/CSS/JS standalone chiamata Libretto.\n\nDevi aiutarmi ad aggiornarla senza rompere le funzioni esistenti. Requisiti architetturali importanti:\n- persistenza dati con localStorage;\n- saldi dei conti calcolati solo da saldo iniziale + movimenti + trasferimenti;\n- i singoli movimenti devono essere modificabili;\n- supporto trasferimenti tra conti;\n- ciclo Dashboard e Budget basato sul movimento Stipendio più recente fino al prossimo Stipendio;\n- riepilogo budget con barre di completamento in Dashboard;\n- non cancellare dati già salvati in localStorage;\n- preferisci patch mirate e conservative rispetto a riscrivere tutto.\n\nRichiesta di modifica / nuova funzionalità:\n[SCRIVI QUI COSA VUOI MODIFICARE]\n\nAnalizza prima il codice e poi restituisci un file HTML completo aggiornato.`;
+  const base = `Sto sviluppando una single-file web app HTML/CSS/JS standalone chiamata Libretto.\n\nDevi aiutarmi ad aggiornarla senza rompere le funzioni esistenti. Requisiti architetturali importanti:\n- persistenza dati locale con localStorage e cloud opzionale Supabase multiutente;\n- saldi dei conti calcolati solo da saldo iniziale + movimenti + trasferimenti;\n- i singoli movimenti devono essere modificabili;\n- supporto trasferimenti tra conti;\n- ciclo Dashboard e Budget basato sul movimento Stipendio più recente fino al prossimo Stipendio;\n- riepilogo budget con barre di completamento in Dashboard;\n- non cancellare dati già salvati in localStorage;\n- preferisci patch mirate e conservative rispetto a riscrivere tutto.\n\nRichiesta di modifica / nuova funzionalità:\n[SCRIVI QUI COSA VUOI MODIFICARE]\n\nAnalizza prima il codice e poi restituisci un file HTML completo aggiornato.`;
   return includeHtml ? `${base}\n\n--- CODICE HTML CORRENTE ---\n${currentHtmlSource()}` : base;
 }
 
@@ -1415,6 +1576,7 @@ function migrateState(){
 
 /* ============ INIT ============ */
 (async function init(){
+  await initCloud();
   const had=await loadState();
   if(!had){ migrateState(); state.transactions=seedTransactions(); saveState(); } else { migrateState(); saveState(); }
   setPage('dashboard');
