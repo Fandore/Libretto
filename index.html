@@ -246,6 +246,11 @@
   .cloud-dot{width:10px;height:10px;border-radius:50%;background:var(--cream-dim);flex-shrink:0;}
   .cloud-dot.on{background:var(--sage);}
   .cloud-dot.off{background:var(--coral);}
+  .cloud-dot.sync{background:var(--amber);}
+  .sync-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin:12px 0;}
+  .sync-pill{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 12px;font-size:12.5px;color:var(--cream-dim);}
+  .sync-pill b{display:block;color:var(--cream);font-size:13.5px;margin-top:2px;}
+  .sync-note{font-size:12.5px;color:var(--cream-dim);line-height:1.45;margin-top:10px;}
   .code-block{white-space:pre-wrap;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:12px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.45;color:var(--cream-dim);overflow:auto;max-height:280px;}
 
   .prompt-box{width:100%;min-height:160px;background:var(--surface-2);border:1px solid var(--line);color:var(--cream);padding:12px;border-radius:9px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.45;resize:vertical;}
@@ -469,18 +474,43 @@ function seedTransactions(){
 }
 
 /* ============ PERSISTENCE — STANDALONE BROWSER ============ */
+const APP_VERSION = '15.0-cloud-sync';
 const STORAGE_KEY = 'libretto-v2-standalone-state';
 const CLOUD_CONFIG_KEY = 'libretto-cloud-config';
-let cloud = {client:null,user:null,ready:false,loading:false};
+const DEVICE_ID_KEY = 'libretto-device-id';
+let cloud = {client:null,user:null,ready:false,loading:false,syncing:false,status:'local',lastSync:null,lastError:null,pending:false};
 let cloudSaveTimer=null;
+function deviceId(){
+  let id=localStorage.getItem(DEVICE_ID_KEY);
+  if(!id){ id='dev-'+Math.random().toString(36).slice(2)+'-'+Date.now().toString(36); localStorage.setItem(DEVICE_ID_KEY,id); }
+  return id;
+}
+function nowIso(){ return new Date().toISOString(); }
+function ensureMeta(){
+  if(!state._meta) state._meta={};
+  if(!state._meta.createdAt) state._meta.createdAt=nowIso();
+  if(!state._meta.deviceId) state._meta.deviceId=deviceId();
+  if(!state._meta.appVersion) state._meta.appVersion=APP_VERSION;
+  return state._meta;
+}
+function touchState(){ const m=ensureMeta(); m.updatedAt=nowIso(); m.deviceId=deviceId(); m.appVersion=APP_VERSION; }
+function localUpdatedAt(){ return (state._meta && state._meta.updatedAt) || ''; }
+function fmtDateTime(iso){ return iso ? new Date(iso).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : 'mai'; }
 function getCloudConfig(){
   try{ return JSON.parse(localStorage.getItem(CLOUD_CONFIG_KEY)||'{}'); }catch(e){ return {}; }
 }
 function hasCloudConfig(){ const c=getCloudConfig(); return !!(c.url&&c.anonKey); }
 function cloudStatusText(){
   if(!hasCloudConfig()) return 'Cloud non configurato: uso locale';
+  if(cloud.syncing) return 'Sincronizzazione in corso…';
+  if(cloud.lastError) return 'Errore cloud: controlla connessione o configurazione';
   if(cloud.user) return `Cloud attivo · ${cloud.user.email||cloud.user.id}`;
   return 'Cloud configurato, login non effettuato';
+}
+function cloudDotClass(){
+  if(cloud.syncing) return 'sync';
+  if(cloud.user && !cloud.lastError) return 'on';
+  return 'off';
 }
 async function initCloud(){
   if(!window.supabase || !hasCloudConfig()) return false;
@@ -498,19 +528,46 @@ async function initCloud(){
     return true;
   }catch(e){ console.warn('Cloud non inizializzato',e); return false; }
 }
+async function pullCloudState({force=false}={}){
+  if(!cloud.client || !cloud.user) return false;
+  try{
+    cloud.loading=true; cloud.syncing=true; cloud.lastError=null; renderSyncIfVisible();
+    const {data,error}=await cloud.client.from('libretto_profiles').select('data,updated_at').eq('user_id',cloud.user.id).maybeSingle();
+    if(error && error.code!=='PGRST116') throw error;
+    if(data && data.data){
+      const remote=data.data;
+      const remoteUpdated=(remote._meta && remote._meta.updatedAt) || data.updated_at || '';
+      const localUpdated=localUpdatedAt();
+      if(force || !localUpdated || remoteUpdated>=localUpdated){
+        state=Object.assign(state,remote);
+        migrateState();
+        localStorage.setItem(STORAGE_KEY,JSON.stringify(state));
+        cloud.lastSync=nowIso(); cloud.status='synced'; cloud.pending=false;
+        cloud.loading=false; cloud.syncing=false; renderSyncIfVisible();
+        return true;
+      }
+      cloud.loading=false; cloud.syncing=false; renderSyncIfVisible();
+      return false;
+    }
+    cloud.loading=false; cloud.syncing=false;
+    await cloudSaveNow();
+    return true;
+  }catch(e){
+    cloud.loading=false; cloud.syncing=false; cloud.lastError=e.message||String(e); renderSyncIfVisible();
+    console.warn('Impossibile leggere dal cloud, uso locale', e); toast('Cloud non disponibile: uso dati locali'); return false;
+  }
+}
+async function syncCloudNow({preferCloud=false}={}){
+  if(!cloud.client || !cloud.user) return false;
+  if(preferCloud) return await pullCloudState({force:true});
+  const pulled=await pullCloudState({force:false});
+  if(pulled) return true;
+  return await cloudSaveNow();
+}
 async function loadState(){
-  // Se c'è un utente cloud loggato, il cloud diventa fonte primaria.
   if(cloud.client && cloud.user){
-    try{
-      cloud.loading=true;
-      const {data,error}=await cloud.client.from('libretto_profiles').select('data').eq('user_id',cloud.user.id).maybeSingle();
-      if(error && error.code!=='PGRST116') throw error;
-      if(data && data.data){ state=Object.assign(state,data.data); migrateState(); localStorage.setItem(STORAGE_KEY,JSON.stringify(state)); cloud.loading=false; return true; }
-      // Primo accesso: usa lo stato locale/semi-demo e lo crea nel cloud.
-      const raw=localStorage.getItem(STORAGE_KEY) || localStorage.getItem('libretto-state2');
-      if(raw){ state=Object.assign(state,JSON.parse(raw)); migrateState(); }
-      cloud.loading=false; await cloudSaveNow(); return !!raw;
-    }catch(e){ cloud.loading=false; console.warn('Impossibile leggere dal cloud, uso locale', e); toast('Cloud non disponibile: uso dati locali'); }
+    const ok=await pullCloudState({force:true});
+    if(ok) return true;
   }
   try{
     const raw=localStorage.getItem(STORAGE_KEY) || localStorage.getItem('libretto-state2');
@@ -520,6 +577,7 @@ async function loadState(){
 }
 let saveTimer=null;
 function saveState(){
+  if(!cloud.loading) touchState();
   clearTimeout(saveTimer);
   saveTimer=setTimeout(()=>{
     try{ localStorage.setItem(STORAGE_KEY,JSON.stringify(state)); }
@@ -527,24 +585,33 @@ function saveState(){
   },150);
   scheduleCloudSave();
 }
-function forceSaveState(){ try{ localStorage.setItem(STORAGE_KEY,JSON.stringify(state)); scheduleCloudSave(50); return true; }catch(e){ console.warn(e); return false; } }
-function scheduleCloudSave(delay=900){
+function forceSaveState(){ try{ touchState(); localStorage.setItem(STORAGE_KEY,JSON.stringify(state)); scheduleCloudSave(50); return true; }catch(e){ console.warn(e); return false; } }
+function scheduleCloudSave(delay=700){
   if(!cloud.client || !cloud.user || cloud.loading) return;
+  cloud.pending=true; cloud.status='pending'; renderSyncIfVisible();
   clearTimeout(cloudSaveTimer);
   cloudSaveTimer=setTimeout(()=>cloudSaveNow(),delay);
 }
 async function cloudSaveNow(){
   if(!cloud.client || !cloud.user) return false;
   try{
-    const payload={user_id:cloud.user.id,data:state,updated_at:new Date().toISOString()};
+    cloud.syncing=true; cloud.lastError=null; renderSyncIfVisible();
+    ensureMeta();
+    const payload={user_id:cloud.user.id,data:state,updated_at:nowIso()};
     const {error}=await cloud.client.from('libretto_profiles').upsert(payload,{onConflict:'user_id'});
     if(error) throw error;
+    cloud.lastSync=nowIso(); cloud.status='synced'; cloud.pending=false; cloud.syncing=false; renderSyncIfVisible();
     return true;
-  }catch(e){ console.warn('Salvataggio cloud non riuscito',e); return false; }
+  }catch(e){ cloud.syncing=false; cloud.lastError=e.message||String(e); renderSyncIfVisible(); console.warn('Salvataggio cloud non riuscito',e); return false; }
+}
+function renderSyncIfVisible(){
+  const box=document.getElementById('cloudLiveStatus');
+  if(!box) return;
+  box.innerHTML=cloudLiveStatusHTML();
 }
 function exportBackup(){
   forceSaveState();
-  const payload={app:'Libretto',version:'14.0-multiuser-supabase-ready',exportedAt:new Date().toISOString(),state};
+  const payload={app:'Libretto',version:APP_VERSION,exportedAt:new Date().toISOString(),state};
   const blob=new Blob([JSON.stringify(payload,null,2)],{type:'application/json'});
   const url=URL.createObjectURL(blob);
   const a=document.createElement('a');
@@ -994,6 +1061,20 @@ function renderCategories(){
 
 
 
+
+function cloudLiveStatusHTML(){
+  const logged=!!cloud.user;
+  return `<span class="cloud-dot ${cloudDotClass()}"></span><span>${escapeHTML(cloudStatusText())}</span>`;
+}
+function renderSyncDetails(){
+  return `<div class="sync-grid">
+    <div class="sync-pill">Stato<b>${cloud.syncing?'In corso':cloud.pending?'Da sincronizzare':cloud.lastError?'Errore':cloud.user?'Sincronizzato':'Locale'}</b></div>
+    <div class="sync-pill">Ultimo sync<b>${fmtDateTime(cloud.lastSync)}</b></div>
+    <div class="sync-pill">Ultima modifica<b>${fmtDateTime(localUpdatedAt())}</b></div>
+  </div>
+  ${cloud.lastError?`<div class="alert-banner danger"><div class="aicon">⚠️</div><div class="abody"><div class="atitle">Errore sincronizzazione</div><div class="adesc">${escapeHTML(cloud.lastError)}</div></div></div>`:''}`;
+}
+
 /* ============ CLOUD / MULTI-USER PAGE ============ */
 function renderCloud(){
   const cfg=getCloudConfig();
@@ -1001,14 +1082,14 @@ function renderCloud(){
   const sql=`create table if not exists public.libretto_profiles (\n  user_id uuid primary key references auth.users(id) on delete cascade,\n  data jsonb not null default '{}'::jsonb,\n  updated_at timestamptz not null default now()\n);\n\nalter table public.libretto_profiles enable row level security;\n\ncreate policy "Users can read own Libretto data"\non public.libretto_profiles for select\nusing (auth.uid() = user_id);\n\ncreate policy "Users can insert own Libretto data"\non public.libretto_profiles for insert\nwith check (auth.uid() = user_id);\n\ncreate policy "Users can update own Libretto data"\non public.libretto_profiles for update\nusing (auth.uid() = user_id)\nwith check (auth.uid() = user_id);`;
   return `
   <div class="topbar"><h1>Utenti / Cloud</h1></div>
-  <div class="cloud-status"><span class="cloud-dot ${logged?'on':'off'}"></span><span>${escapeHTML(cloudStatusText())}</span></div>
+  <div class="cloud-status" id="cloudLiveStatus">${cloudLiveStatusHTML()}</div>
   <div class="grid row2" style="margin-bottom:16px;">
     <div class="card">
       <h3>Accesso utente</h3>
       ${!hasCloudConfig()?`<div class="empty" style="text-align:left;padding-top:0">Configura Supabase qui sotto, poi potrai creare utenti e salvare i dati separatamente per ciascun account.</div>`:''}
       ${logged?`
-        <div class="empty" style="text-align:left;padding-top:0">Sei collegato come <b>${escapeHTML(cloud.user.email||cloud.user.id)}</b>. Ogni modifica viene salvata sia localmente sia nel database cloud del tuo utente.</div>
-        <div class="modal-actions"><button class="btn ghost" id="cloudPullBtn">↻ Ricarica dal cloud</button><button class="btn" id="cloudPushBtn">☁️ Salva ora nel cloud</button><button class="btn danger" id="cloudLogoutBtn">Esci</button></div>
+        <div class="empty" style="text-align:left;padding-top:0">Sei collegato come <b>${escapeHTML(cloud.user.email||cloud.user.id)}</b>. Ogni modifica viene salvata nel cloud del tuo utente e mantenuta anche in cache locale sul dispositivo.</div>
+        ${renderSyncDetails()}<div class="modal-actions"><button class="btn" id="cloudSyncBtn">↻ Sincronizza ora</button><button class="btn ghost" id="cloudPullBtn">Scarica dal cloud</button><button class="btn ghost" id="cloudPushBtn">☁️ Forza upload</button><button class="btn danger" id="cloudLogoutBtn">Esci</button></div>
       `:`
         <div class="field"><label>Email</label><input type="email" id="cloudEmail" placeholder="nome@email.com"></div>
         <div class="field"><label>Password</label><input type="password" id="cloudPassword" placeholder="Minimo 6 caratteri"></div>
@@ -1033,9 +1114,9 @@ function renderCloud(){
     <h3>Come funziona</h3>
     <ul class="tech-list">
       <li>Ogni account Supabase/Auth ha un proprio <span class="num">user_id</span>.</li>
-      <li>I dati Libretto vengono salvati in una riga JSON separata per utente.</li>
+      <li>I dati Libretto vengono salvati in una riga JSON separata per utente, con timestamp di ultima modifica.</li>
       <li>Le policy RLS impediscono a un utente di leggere o modificare i dati degli altri.</li>
-      <li>Il backup JSON resta disponibile come sicurezza aggiuntiva.</li>
+      <li>PC e telefono restano allineati usando lo stesso login: all'avvio l'app scarica il cloud e a ogni modifica fa upload automatico.</li><li>Il backup JSON resta disponibile come sicurezza aggiuntiva.</li>
     </ul>
   </div>`;
 }
@@ -1179,10 +1260,12 @@ function bindPageEvents(){
   if(cloudSignupBtn) cloudSignupBtn.addEventListener('click',async()=>cloudAuth('signup'));
   const cloudLogoutBtn=document.getElementById('cloudLogoutBtn');
   if(cloudLogoutBtn) cloudLogoutBtn.addEventListener('click',async()=>{ if(cloud.client) await cloud.client.auth.signOut(); cloud.user=null; render(); toast('Logout effettuato'); });
+  const cloudSyncBtn=document.getElementById('cloudSyncBtn');
+  if(cloudSyncBtn) cloudSyncBtn.addEventListener('click',async()=>{ const ok=await syncCloudNow(); render(); toast(ok?'Sincronizzazione completata':'Sincronizzazione non riuscita'); });
   const cloudPullBtn=document.getElementById('cloudPullBtn');
-  if(cloudPullBtn) cloudPullBtn.addEventListener('click',async()=>{ await loadState(); render(); toast('Dati ricaricati dal cloud'); });
+  if(cloudPullBtn) cloudPullBtn.addEventListener('click',async()=>{ const ok=await pullCloudState({force:true}); render(); toast(ok?'Dati scaricati dal cloud':'Download cloud non riuscito'); });
   const cloudPushBtn=document.getElementById('cloudPushBtn');
-  if(cloudPushBtn) cloudPushBtn.addEventListener('click',async()=>{ const ok=await cloudSaveNow(); toast(ok?'Dati salvati nel cloud':'Salvataggio cloud non riuscito'); });
+  if(cloudPushBtn) cloudPushBtn.addEventListener('click',async()=>{ const ok=await cloudSaveNow(); render(); toast(ok?'Dati salvati nel cloud':'Salvataggio cloud non riuscito'); });
   const copySqlBtn=document.getElementById('copySqlBtn');
   if(copySqlBtn) copySqlBtn.addEventListener('click',()=>{ const txt=document.querySelector('.code-block')?.textContent||''; navigator.clipboard.writeText(txt).then(()=>toast('SQL copiato')); });
 
@@ -1265,7 +1348,7 @@ async function cloudAuth(mode){
     if(res.error) throw res.error;
     cloud.user=res.data.user || (res.data.session&&res.data.session.user) || cloud.user;
     await loadState();
-    saveState();
+    await syncCloudNow();
     render();
     toast(mode==='signup'?'Account creato. Controlla eventuale email di conferma.':'Accesso effettuato');
   }catch(e){ console.warn(e); toast(e.message||'Accesso non riuscito'); }
@@ -1561,6 +1644,7 @@ function migrateState(){
   state.transactions.forEach(t=>{ if(!t.movementType) t.movementType='standard'; if(t.recurring===undefined) t.recurring=false; });
   if(!state.goals) state.goals=[];
   if(!state.settings) state.settings={};
+  ensureMeta();
   // Il ciclo budget ora è derivato dai movimenti Stipendio, non da un giorno fisso.
 }
 
@@ -1580,6 +1664,8 @@ function migrateState(){
   const had=await loadState();
   if(!had){ migrateState(); state.transactions=seedTransactions(); saveState(); } else { migrateState(); saveState(); }
   setPage('dashboard');
+  window.addEventListener('focus',()=>{ if(cloud.client&&cloud.user) syncCloudNow(); });
+  setInterval(()=>{ if(cloud.client&&cloud.user) syncCloudNow(); }, 60000);
 })();
 </script>
 </body>

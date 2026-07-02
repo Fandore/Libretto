@@ -1,4 +1,4 @@
-const CACHE_NAME = 'libretto-v14-cache';
+const CACHE_NAME = 'libretto-v15-cache';
 const ASSETS = ['./', './index.html', './manifest.webmanifest', './libretto-icon.svg'];
 self.addEventListener('install', event => {
   event.waitUntil(caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS)));
