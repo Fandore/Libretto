@@ -532,7 +532,7 @@ async function pullCloudState({force=false}={}){
   if(!cloud.client || !cloud.user) return false;
   try{
     cloud.loading=true; cloud.syncing=true; cloud.lastError=null; renderSyncIfVisible();
-    const {data,error}=await cloud.client.from('libretto_profiles').select('data,updated_at').eq('user_id',cloud.user.id).maybeSingle();
+    const {data,error}=await cloud.client.from('app_settings').select('data,updated_at').eq('user_id',cloud.user.id).maybeSingle();
     if(error && error.code!=='PGRST116') throw error;
     if(data && data.data){
       const remote=data.data;
@@ -598,7 +598,7 @@ async function cloudSaveNow(){
     cloud.syncing=true; cloud.lastError=null; renderSyncIfVisible();
     ensureMeta();
     const payload={user_id:cloud.user.id,data:state,updated_at:nowIso()};
-    const {error}=await cloud.client.from('libretto_profiles').upsert(payload,{onConflict:'user_id'});
+    const {error}=await cloud.client.from('app_settings').upsert(payload,{onConflict:'user_id'});
     if(error) throw error;
     cloud.lastSync=nowIso(); cloud.status='synced'; cloud.pending=false; cloud.syncing=false; renderSyncIfVisible();
     return true;
@@ -1079,7 +1079,7 @@ function renderSyncDetails(){
 function renderCloud(){
   const cfg=getCloudConfig();
   const logged=!!cloud.user;
-  const sql=`create table if not exists public.libretto_profiles (\n  user_id uuid primary key references auth.users(id) on delete cascade,\n  data jsonb not null default '{}'::jsonb,\n  updated_at timestamptz not null default now()\n);\n\nalter table public.libretto_profiles enable row level security;\n\ncreate policy "Users can read own Libretto data"\non public.libretto_profiles for select\nusing (auth.uid() = user_id);\n\ncreate policy "Users can insert own Libretto data"\non public.libretto_profiles for insert\nwith check (auth.uid() = user_id);\n\ncreate policy "Users can update own Libretto data"\non public.libretto_profiles for update\nusing (auth.uid() = user_id)\nwith check (auth.uid() = user_id);`;
+  const sql=`create table if not exists public.app_settings (\n  user_id uuid primary key references auth.users(id) on delete cascade,\n  data jsonb not null default '{}'::jsonb,\n  updated_at timestamptz not null default now()\n);\n\nalter table public.app_settings enable row level security;\n\ncreate policy "Users can read own Libretto data"\non public.app_settings for select\nusing (auth.uid() = user_id);\n\ncreate policy "Users can insert own Libretto data"\non public.app_settings for insert\nwith check (auth.uid() = user_id);\n\ncreate policy "Users can update own Libretto data"\non public.app_settings for update\nusing (auth.uid() = user_id)\nwith check (auth.uid() = user_id);`;
   return `
   <div class="topbar"><h1>Utenti / Cloud</h1></div>
   <div class="cloud-status" id="cloudLiveStatus">${cloudLiveStatusHTML()}</div>
