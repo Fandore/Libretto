@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Libretto">
 <link rel="manifest" href="manifest.webmanifest">
-<title>Libretto v18 — le tue finanze</title>
+<title>Libretto v20 — le tue finanze</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Source+Sans+3:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
@@ -494,7 +494,9 @@ function seedTransactions(){
 }
 
 /* ============ PERSISTENCE — STANDALONE BROWSER ============ */
-const APP_VERSION = '19.0-app-login';
+const APP_VERSION = '20.0-preconfigured-cloud';
+const PRECONFIGURED_SUPABASE_URL = 'https://marymbewsgxrabirugkk.supabase.co';
+const PRECONFIGURED_SUPABASE_ANON_KEY = 'sb_publishable_Jsd4sX6_6pNCUqHIcun4lA_9F81WlPg';
 const STORAGE_KEY = 'libretto-v2-standalone-state';
 const CLOUD_CONFIG_KEY = 'libretto-cloud-config';
 const DEVICE_ID_KEY = 'libretto-device-id';
@@ -517,11 +519,12 @@ function touchState(){ const m=ensureMeta(); m.updatedAt=nowIso(); m.deviceId=de
 function localUpdatedAt(){ return (state._meta && state._meta.updatedAt) || ''; }
 function fmtDateTime(iso){ return iso ? new Date(iso).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : 'mai'; }
 function getCloudConfig(){
-  try{ return JSON.parse(localStorage.getItem(CLOUD_CONFIG_KEY)||'{}'); }catch(e){ return {}; }
+  // v20: Supabase è preconfigurato nella build, così ogni dispositivo vede direttamente login/app.
+  return {url:PRECONFIGURED_SUPABASE_URL, anonKey:PRECONFIGURED_SUPABASE_ANON_KEY};
 }
 function hasCloudConfig(){ const c=getCloudConfig(); return !!(c.url&&c.anonKey); }
 function cloudStatusText(){
-  if(!hasCloudConfig()) return 'Cloud non configurato: uso locale';
+  if(!hasCloudConfig()) return 'Cloud non disponibile';
   if(cloud.syncing) return 'Sincronizzazione in corso…';
   if(cloud.lastError) return 'Errore cloud: controlla connessione o configurazione';
   if(cloud.user) return `Cloud attivo · ${cloud.user.email||cloud.user.id}`;
@@ -554,7 +557,7 @@ function renderAuthGate(){
   const configured=!!(cfg.url&&cfg.anonKey);
   return `<div class="auth-gate"><div class="auth-card">
     <div class="auth-logo"><div class="mark">L</div><div><div class="auth-title">Libretto</div><div class="auth-sub">Accedi per usare l'app e sincronizzare i tuoi dati su PC e telefono.</div></div></div>
-    ${!configured?`<div class="alert-banner warn"><div class="aicon">⚙️</div><div class="abody"><div class="atitle">Cloud non configurato</div><div class="adesc">Vai nella sezione Utenti / Cloud e salva URL Supabase e anon public key.</div></div></div><div class="modal-actions"><button class="btn" id="goCloudSetupBtn">Configura cloud</button></div>`:`
+    ${!configured?`<div class="alert-banner warn"><div class="aicon">⚙️</div><div class="abody"><div class="atitle">Cloud non configurato</div><div class="adesc">Configurazione cloud integrata nella build. Ricarica la pagina se il login non compare.</div></div></div><div class="modal-actions"><button class="btn" id="goCloudSetupBtn">Apri cloud</button></div>`:`
       <div class="auth-mode"><button id="authModeLogin" class="active" type="button">Accedi</button><button id="authModeSignup" type="button">Crea account</button></div>
       <div class="field"><label>Email</label><input type="email" id="cloudEmail" placeholder="nome@email.com" autocomplete="email"></div>
       <div class="field"><label>Password</label><input type="password" id="cloudPassword" placeholder="Minimo 6 caratteri" autocomplete="current-password"></div>
@@ -1242,11 +1245,10 @@ grant execute on function public.get_libretto_state() to authenticated;`
       `}
     </div>
     <div class="card">
-      <h3>Configurazione Supabase</h3>
-      <div class="field"><label>Project URL</label><input type="text" id="supabaseUrl" value="${escapeHTML(cfg.url||'')}" placeholder="https://xxxxx.supabase.co"></div>
-      <div class="field"><label>Anon public key</label><input type="password" id="supabaseAnon" value="${escapeHTML(cfg.anonKey||'')}" placeholder="eyJhbGciOi..."></div>
-      <div class="modal-actions"><button class="btn" id="saveCloudConfigBtn">Salva configurazione</button><button class="btn ghost" id="clearCloudConfigBtn">Rimuovi</button></div>
-      <div class="empty" style="text-align:left">La anon key è pubblica per definizione; la sicurezza vera è data dalle policy RLS sotto.</div>
+      <h3>Cloud preconfigurato</h3>
+      <div class="empty" style="text-align:left;padding-top:0">Questa build è già collegata al progetto Supabase di Libretto. Su ogni nuovo dispositivo devi solo accedere con email e password; non serve inserire URL o chiavi.</div>
+      <div class="cloud-status"><span class="dot on"></span><div><b>Supabase configurato</b><div class="mini">Sessione persistente attiva su questo browser/dispositivo.</div></div></div>
+      <div class="modal-actions"><button class="btn ghost" id="cloudHardReloadBtn">↻ Ricarica app</button></div>
     </div>
   </div>
   <div class="card" style="margin-bottom:16px;">
@@ -1285,7 +1287,7 @@ function renderHelp(){
       <h3>Stato app / note tecniche</h3>
       <ul class="tech-list">
         <li>Single-file HTML/CSS/JS standalone, pronta anche per pubblicazione web.</li>
-        <li>Persistenza locale con <span class="num">localStorage</span>; cloud multiutente opzionale con Supabase.</li>
+        <li>Persistenza locale con <span class="num">localStorage</span>; cloud multiutente Supabase preconfigurato.</li>
         <li>Saldi conto calcolati da saldo iniziale + movimenti.</li>
         <li>Supporto a entrate, uscite e trasferimenti tra conti.</li>
         <li>Ciclo budget/dashboard basato sullo Stipendio più recente.</li>
@@ -1416,6 +1418,9 @@ function bindPageEvents(){
   if(cloudPullBtn) cloudPullBtn.addEventListener('click',async()=>{ const ok=await pullCloudState({force:true}); render(); toast(ok?'Dati scaricati dal cloud':'Download cloud non riuscito'); });
   const cloudPushBtn=document.getElementById('cloudPushBtn');
   if(cloudPushBtn) cloudPushBtn.addEventListener('click',async()=>{ const ok=await cloudSaveNow(); render(); toast(ok?'Dati salvati nel cloud':'Salvataggio cloud non riuscito'); });
+
+  const cloudHardReloadBtn=document.getElementById('cloudHardReloadBtn');
+  if(cloudHardReloadBtn) cloudHardReloadBtn.addEventListener('click',()=>{ location.href=location.pathname+'?v=20&refresh='+Date.now(); });
   const copySqlBtn=document.getElementById('copySqlBtn');
   if(copySqlBtn) copySqlBtn.addEventListener('click',()=>{ const txt=document.querySelector('.code-block')?.textContent||''; navigator.clipboard.writeText(txt).then(()=>toast('SQL copiato')); });
 
@@ -1727,7 +1732,7 @@ function currentHtmlSource(){
 }
 
 function buildUpdatePrompt(includeHtml=true){
-  const base = `Sto sviluppando una single-file web app HTML/CSS/JS standalone chiamata Libretto.\n\nDevi aiutarmi ad aggiornarla senza rompere le funzioni esistenti. Requisiti architetturali importanti:\n- persistenza dati locale con localStorage e cloud opzionale Supabase multiutente;\n- saldi dei conti calcolati solo da saldo iniziale + movimenti + trasferimenti;\n- i singoli movimenti devono essere modificabili;\n- supporto trasferimenti tra conti;\n- ciclo Dashboard e Budget basato sul movimento Stipendio più recente fino al prossimo Stipendio;\n- riepilogo budget con barre di completamento in Dashboard;\n- non cancellare dati già salvati in localStorage;\n- preferisci patch mirate e conservative rispetto a riscrivere tutto.\n\nRichiesta di modifica / nuova funzionalità:\n[SCRIVI QUI COSA VUOI MODIFICARE]\n\nAnalizza prima il codice e poi restituisci un file HTML completo aggiornato.`;
+  const base = `Sto sviluppando una single-file web app HTML/CSS/JS standalone chiamata Libretto.\n\nDevi aiutarmi ad aggiornarla senza rompere le funzioni esistenti. Requisiti architetturali importanti:\n- persistenza dati locale con localStorage e cloud Supabase multiutente preconfigurato;\n- saldi dei conti calcolati solo da saldo iniziale + movimenti + trasferimenti;\n- i singoli movimenti devono essere modificabili;\n- supporto trasferimenti tra conti;\n- ciclo Dashboard e Budget basato sul movimento Stipendio più recente fino al prossimo Stipendio;\n- riepilogo budget con barre di completamento in Dashboard;\n- non cancellare dati già salvati in localStorage;\n- preferisci patch mirate e conservative rispetto a riscrivere tutto.\n\nRichiesta di modifica / nuova funzionalità:\n[SCRIVI QUI COSA VUOI MODIFICARE]\n\nAnalizza prima il codice e poi restituisci un file HTML completo aggiornato.`;
   return includeHtml ? `${base}\n\n--- CODICE HTML CORRENTE ---\n${currentHtmlSource()}` : base;
 }
 
