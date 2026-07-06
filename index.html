@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Libretto">
 <link rel="manifest" href="manifest.webmanifest">
-<title>Libretto v13 — le tue finanze</title>
+<title>Libretto v17 — le tue finanze</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Source+Sans+3:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
@@ -474,7 +474,7 @@ function seedTransactions(){
 }
 
 /* ============ PERSISTENCE — STANDALONE BROWSER ============ */
-const APP_VERSION = '15.0-cloud-sync';
+const APP_VERSION = '17.0-cloud-sync-rpc';
 const STORAGE_KEY = 'libretto-v2-standalone-state';
 const CLOUD_CONFIG_KEY = 'libretto-cloud-config';
 const DEVICE_ID_KEY = 'libretto-device-id';
@@ -532,8 +532,16 @@ async function pullCloudState({force=false}={}){
   if(!cloud.client || !cloud.user) return false;
   try{
     cloud.loading=true; cloud.syncing=true; cloud.lastError=null; renderSyncIfVisible();
-    const {data,error}=await cloud.client.from('app_settings').select('data,updated_at').eq('user_id',cloud.user.id).maybeSingle();
-    if(error && error.code!=='PGRST116') throw error;
+    let data=null, error=null;
+    const res=await cloud.client.from('app_settings').select('data,updated_at').eq('user_id',cloud.user.id).maybeSingle();
+    data=res.data; error=res.error;
+    if(error && error.code!=='PGRST116'){
+      // Fallback v17: usa RPC security-definer se le policy RLS bloccano la tabella diretta.
+      const rpc=await cloud.client.rpc('get_libretto_state');
+      if(rpc.error) throw error;
+      data=rpc.data ? {data:rpc.data.data, updated_at:rpc.data.updated_at} : null;
+      error=null;
+    }
     if(data && data.data){
       const remote=data.data;
       const remoteUpdated=(remote._meta && remote._meta.updatedAt) || data.updated_at || '';
@@ -597,10 +605,18 @@ async function cloudSaveNow(){
   try{
     cloud.syncing=true; cloud.lastError=null; renderSyncIfVisible();
     ensureMeta();
+    state._meta.updatedAt=nowIso();
+    state._meta.deviceId=deviceId();
+    state._meta.appVersion=APP_VERSION;
     const payload={user_id:cloud.user.id,data:state,updated_at:nowIso()};
-    const {error}=await cloud.client.from('app_settings').upsert(payload,{onConflict:'user_id'});
-    if(error) throw error;
+    let {error}=await cloud.client.from('app_settings').upsert(payload,{onConflict:'user_id'});
+    if(error){
+      // Fallback v17: se l'upsert diretto viene bloccato da RLS, usa la funzione RPC dedicata.
+      const rpc=await cloud.client.rpc('save_libretto_state',{p_data:state});
+      if(rpc.error) throw error;
+    }
     cloud.lastSync=nowIso(); cloud.status='synced'; cloud.pending=false; cloud.syncing=false; renderSyncIfVisible();
+    try{ localStorage.setItem(STORAGE_KEY,JSON.stringify(state)); }catch(_e){}
     return true;
   }catch(e){ cloud.syncing=false; cloud.lastError=e.message||String(e); renderSyncIfVisible(); console.warn('Salvataggio cloud non riuscito',e); return false; }
 }
@@ -1079,7 +1095,76 @@ function renderSyncDetails(){
 function renderCloud(){
   const cfg=getCloudConfig();
   const logged=!!cloud.user;
-  const sql=`create table if not exists public.app_settings (\n  user_id uuid primary key references auth.users(id) on delete cascade,\n  data jsonb not null default '{}'::jsonb,\n  updated_at timestamptz not null default now()\n);\n\nalter table public.app_settings enable row level security;\n\ncreate policy "Users can read own Libretto data"\non public.app_settings for select\nusing (auth.uid() = user_id);\n\ncreate policy "Users can insert own Libretto data"\non public.app_settings for insert\nwith check (auth.uid() = user_id);\n\ncreate policy "Users can update own Libretto data"\non public.app_settings for update\nusing (auth.uid() = user_id)\nwith check (auth.uid() = user_id);`;
+  const sql=`-- LIBRETTO v17 - patch RPC per sync cloud robusta
+-- Incolla questo script in Supabase > SQL Editor se vedi errori RLS su app_settings.
+
+create table if not exists public.app_settings (
+  user_id uuid primary key references auth.users(id) on delete cascade,
+  data jsonb not null default '{}'::jsonb,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+alter table public.app_settings enable row level security;
+
+drop policy if exists "app_settings_select_own" on public.app_settings;
+drop policy if exists "app_settings_insert_own" on public.app_settings;
+drop policy if exists "app_settings_update_own" on public.app_settings;
+drop policy if exists "app_settings_delete_own" on public.app_settings;
+
+create policy "app_settings_select_own"
+on public.app_settings for select
+to authenticated
+using (auth.uid() = user_id);
+
+create policy "app_settings_insert_own"
+on public.app_settings for insert
+to authenticated
+with check (auth.uid() = user_id);
+
+create policy "app_settings_update_own"
+on public.app_settings for update
+to authenticated
+using (auth.uid() = user_id)
+with check (auth.uid() = user_id);
+
+create policy "app_settings_delete_own"
+on public.app_settings for delete
+to authenticated
+using (auth.uid() = user_id);
+
+create or replace function public.save_libretto_state(p_data jsonb)
+returns void
+language plpgsql
+security definer
+set search_path = public
+as $$
+begin
+  if auth.uid() is null then
+    raise exception 'Not authenticated';
+  end if;
+
+  insert into public.app_settings(user_id, data, updated_at)
+  values (auth.uid(), p_data, now())
+  on conflict (user_id)
+  do update set data = excluded.data, updated_at = now();
+end;
+$$;
+
+grant execute on function public.save_libretto_state(jsonb) to authenticated;
+
+create or replace function public.get_libretto_state()
+returns table(data jsonb, updated_at timestamptz)
+language sql
+security definer
+set search_path = public
+as $$
+  select app_settings.data, app_settings.updated_at
+  from public.app_settings
+  where user_id = auth.uid();
+$$;
+
+grant execute on function public.get_libretto_state() to authenticated;`;
   return `
   <div class="topbar"><h1>Utenti / Cloud</h1></div>
   <div class="cloud-status" id="cloudLiveStatus">${cloudLiveStatusHTML()}</div>
@@ -1243,7 +1328,8 @@ function bindPageEvents(){
   // CLOUD / MULTI-USER
   const saveCloudConfigBtn=document.getElementById('saveCloudConfigBtn');
   if(saveCloudConfigBtn) saveCloudConfigBtn.addEventListener('click',async()=>{
-    const url=(document.getElementById('supabaseUrl').value||'').trim();
+    let url=(document.getElementById('supabaseUrl').value||'').trim();
+    url=url.replace(/\/rest\/v1\/?$/,'').replace(/\/auth\/v1\/?$/,'').replace(/\/$/,'');
     const anonKey=(document.getElementById('supabaseAnon').value||'').trim();
     if(!url||!anonKey){ toast('Inserisci URL e anon key Supabase'); return; }
     localStorage.setItem(CLOUD_CONFIG_KEY,JSON.stringify({url,anonKey}));
