@@ -1,1 +1,19 @@
-{"name":"Libretto","short_name":"Libretto","start_url":"./?v=20","display":"standalone","background_color":"#10221d","theme_color":"#10221d","icons":[{"src":"libretto-icon.svg","sizes":"any","type":"image/svg+xml","purpose":"any maskable"}]}
+{
+  "name": "Libretto — finanze personali",
+  "short_name": "Libretto",
+  "description": "Mini app personale per budget, conti, movimenti e obiettivi.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#10221d",
+  "theme_color": "#162e26",
+  "orientation": "portrait-primary",
+  "icons": [
+    {
+      "src": "libretto-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}
