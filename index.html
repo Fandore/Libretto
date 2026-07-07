@@ -8,7 +8,7 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Libretto">
 <link rel="manifest" href="manifest.webmanifest">
-<title>Libretto v20 — le tue finanze</title>
+<title>Libretto v21 — le tue finanze</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600&family=Source+Sans+3:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap');
 
@@ -271,6 +271,11 @@
   .sync-pill b{display:block;color:var(--cream);font-size:13.5px;margin-top:2px;}
   .sync-note{font-size:12.5px;color:var(--cream-dim);line-height:1.45;margin-top:10px;}
   .code-block{white-space:pre-wrap;background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:12px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.45;color:var(--cream-dim);overflow:auto;max-height:280px;}
+  .import-preview{max-height:320px;overflow:auto;border:1px solid var(--line);border-radius:12px;margin-top:12px;}
+  .import-preview table{width:100%;border-collapse:collapse;font-size:12.5px;}
+  .import-preview th,.import-preview td{padding:8px 9px;border-bottom:1px dashed var(--line);text-align:left;white-space:nowrap;}
+  .import-preview th{color:var(--cream-dim);font-size:11px;text-transform:uppercase;letter-spacing:.5px;background:var(--surface-2);position:sticky;top:0;}
+  .import-error{color:var(--coral);font-size:12.5px;margin-top:4px;}
 
   .prompt-box{width:100%;min-height:160px;background:var(--surface-2);border:1px solid var(--line);color:var(--cream);padding:12px;border-radius:9px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.45;resize:vertical;}
 
@@ -494,7 +499,7 @@ function seedTransactions(){
 }
 
 /* ============ PERSISTENCE — STANDALONE BROWSER ============ */
-const APP_VERSION = '20.0-preconfigured-cloud';
+const APP_VERSION = '21.0-bulk-csv';
 const PRECONFIGURED_SUPABASE_URL = 'https://marvmbewsgxrabirugkk.supabase.co';
 const PRECONFIGURED_SUPABASE_ANON_KEY = 'sb_publishable_Jsd4sX6_6pNCUqHIcun4lA_9F81WlPg';
 const STORAGE_KEY = 'libretto-v2-standalone-state';
@@ -1018,6 +1023,9 @@ function renderTransactions(){
   <div class="topbar">
     <h1>Movimenti</h1>
     <div class="topbar-right">
+      <button class="btn small ghost" id="downloadTxTemplateBtn">⬇️ Template CSV</button>
+      <button class="btn small" id="bulkImportTxBtn">⬆️ Importa CSV</button>
+      <input type="file" id="bulkImportTxFile" accept=".csv,text/csv,.txt" style="display:none">
       <button class="btn small danger" id="delAllBtn">🗑 Elimina tutti</button>
     </div>
   </div>
@@ -1292,7 +1300,7 @@ function renderHelp(){
         <li>Supporto a entrate, uscite e trasferimenti tra conti.</li>
         <li>Ciclo budget/dashboard basato sullo Stipendio più recente.</li>
         <li>Spese ricorrenti e forecast cashflow.</li>
-        <li>Backup/import JSON disponibili nel menu laterale.</li>
+        <li>Backup/import JSON disponibili nel menu laterale.</li><li>Bulk upload CSV dei movimenti dalla sezione Movimenti, con template scaricabile.</li>
       </ul>
     </div>
   </div>
@@ -1343,6 +1351,121 @@ function render(){
     console.error('Errore rendering Libretto', e);
     main.innerHTML=`<div class="topbar"><h1>Ops, qualcosa non torna</h1></div><div class="card"><h3>Errore temporaneo</h3><div class="empty" style="text-align:left">Ho intercettato un problema nel rendering della pagina. Prova a esportare un backup dalla sezione Conti/Backup se disponibile, oppure ricarica la pagina. Dettaglio tecnico: ${escapeHTML(e.message||String(e))}</div></div>`;
   }
+}
+
+
+/* ============ BULK IMPORT CSV ============ */
+const BULK_TEMPLATE_COLUMNS = ['date','type','amount','payee','account','category','movementType','transferTo','goal','recurring','recurringFreq','recurringNextDate'];
+function csvEscape(v){
+  const s=String(v??'');
+  return /[";,\n\r]/.test(s) ? '"'+s.replace(/"/g,'""')+'"' : s;
+}
+function downloadTxTemplate(){
+  const rows=[
+    BULK_TEMPLATE_COLUMNS,
+    [isoToday(),'out','12.50','Esselunga','Conto corrente','Spesa','standard','','','no','',''],
+    [isoToday(),'in','1850.00','Stipendio','Conto corrente','Stipendio','standard','','','no','',''],
+    [isoToday(),'out','300.00','Giroconto risparmio','Conto corrente','Risparmi','transfer','Conto Arancio','Risparmi liquidi','no','',''],
+    [isoToday(),'out','9.99','Spotify','Conto corrente','Abbonamenti','standard','','','yes','Mensile',addDays(isoToday(),30)]
+  ];
+  const csv=rows.map(r=>r.map(csvEscape).join(';')).join('\n');
+  const blob=new Blob([csv],{type:'text/csv;charset=utf-8'});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement('a'); a.href=url; a.download='libretto-template-movimenti.csv'; document.body.appendChild(a); a.click(); a.remove(); URL.revokeObjectURL(url);
+  toast('Template CSV scaricato');
+}
+function parseDelimited(text){
+  text=String(text||'').replace(/^\ufeff/,'');
+  const firstLine=(text.split(/\r?\n/).find(l=>l.trim())||'');
+  const candidates=[';',',','\t'];
+  let delim=';'; let best=-1;
+  for(const d of candidates){ const count=(firstLine.match(new RegExp(d==='\t'?'\\t':d.replace(/[.*+?^${}()|[\]\\]/g,'\\$&'),'g'))||[]).length; if(count>best){best=count;delim=d;} }
+  const rows=[]; let row=[],field='',q=false;
+  for(let i=0;i<text.length;i++){
+    const ch=text[i], next=text[i+1];
+    if(ch==='"'){
+      if(q && next==='"'){ field+='"'; i++; }
+      else q=!q;
+    }else if(ch===delim && !q){ row.push(field); field=''; }
+    else if((ch==='\n'||ch==='\r') && !q){ if(ch==='\r'&&next==='\n') i++; row.push(field); if(row.some(x=>String(x).trim()!=='')) rows.push(row); row=[]; field=''; }
+    else field+=ch;
+  }
+  row.push(field); if(row.some(x=>String(x).trim()!=='')) rows.push(row);
+  if(!rows.length) return [];
+  const headers=rows[0].map(h=>String(h||'').trim());
+  return rows.slice(1).map((r,idx)=>{ const o={_row:idx+2}; headers.forEach((h,i)=>o[h]=String(r[i]||'').trim()); return o; });
+}
+function findAccountIdByName(name){
+  if(!name) return '';
+  const n=String(name).trim().toLowerCase();
+  const byId=state.accounts.find(a=>String(a.id).toLowerCase()===n);
+  if(byId) return byId.id;
+  const byName=state.accounts.find(a=>String(a.name||'').trim().toLowerCase()===n);
+  return byName?byName.id:'';
+}
+function findGoalIdByName(name){
+  if(!name) return null;
+  const n=String(name).trim().toLowerCase();
+  const byId=state.goals.find(g=>String(g.id).toLowerCase()===n);
+  if(byId) return byId.id;
+  const byName=state.goals.find(g=>String(g.name||'').trim().toLowerCase()===n);
+  return byName?byName.id:null;
+}
+function parseBool(v){ return ['si','sì','yes','true','1','y'].includes(String(v||'').trim().toLowerCase()); }
+function normalizeImportedTx(row){
+  const errors=[];
+  const date=(row.date||row.data||'').slice(0,10);
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(date)) errors.push('data non valida: usa YYYY-MM-DD');
+  const type=String(row.type||row.tipo||'out').toLowerCase();
+  if(!['in','out'].includes(type)) errors.push('type deve essere in oppure out');
+  const amount=parseFloat(String(row.amount||row.importo||'').replace(',','.'));
+  if(!amount||amount<=0) errors.push('importo non valido');
+  const account=findAccountIdByName(row.account||row.conto||row.accountId);
+  if(!account) errors.push('conto origine non trovato');
+  let category=row.category||row.categoria||'Altro';
+  const cat=state.categories.find(c=>String(c.name).toLowerCase()===String(category).toLowerCase());
+  if(cat) category=cat.name;
+  else errors.push('categoria non trovata');
+  const movementType=String(row.movementType||row.tipoMovimento||'standard').toLowerCase()==='transfer'?'transfer':'standard';
+  const transferTo=movementType==='transfer'?findAccountIdByName(row.transferTo||row.contoDestinazione||row.toAccount):null;
+  if(movementType==='transfer'&&!transferTo) errors.push('conto destinazione non trovato');
+  if(movementType==='transfer'&&transferTo===account) errors.push('origine e destinazione devono essere diversi');
+  const recurring=parseBool(row.recurring||row.ricorrente);
+  const recurringFreq=row.recurringFreq||row.frequenza||'Mensile';
+  const recurringNextDate=(row.recurringNextDate||row.prossimaData||'').slice(0,10) || null;
+  const tx={id:uid(),date,account,category,payee:row.payee||row.descrizione||row.esercente||(movementType==='transfer'?'Trasferimento':(type==='in'?'Entrata':'Spesa')),amount,type,movementType,transferTo,goalId:findGoalIdByName(row.goal||row.obiettivo),recurring:recurring&&movementType!=='transfer',recurringFreq:recurring?recurringFreq:null,recurringNextDate:recurring?recurringNextDate:null};
+  return {tx, errors, row:row._row};
+}
+function openBulkImportModal(fileText){
+  const parsed=parseDelimited(fileText).map(normalizeImportedTx);
+  const valid=parsed.filter(x=>!x.errors.length);
+  const invalid=parsed.filter(x=>x.errors.length);
+  document.getElementById('modalRoot').innerHTML=`
+  <div class="modal-bg" id="bulkBg"><div class="modal" style="max-width:860px;">
+    <button class="close-x" id="bulkClose">✕</button>
+    <h3>Import movimenti CSV</h3>
+    <div class="mini-grid"><div class="mini-kpi"><div class="mlabel">Righe valide</div><div class="mvalue">${valid.length}</div></div><div class="mini-kpi"><div class="mlabel">Righe da correggere</div><div class="mvalue ${invalid.length?'neg':''}">${invalid.length}</div></div><div class="mini-kpi"><div class="mlabel">Totale file</div><div class="mvalue">${parsed.length}</div></div></div>
+    <div class="empty" style="text-align:left;padding:0 0 10px;">Formato accettato: CSV da Excel con colonne <span class="num">${BULK_TEMPLATE_COLUMNS.join(', ')}</span>. Le colonne principali sono: date, type, amount, payee, account, category.</div>
+    ${invalid.length?`<div class="alert-banner danger"><div class="aicon">⚠️</div><div class="abody"><div class="atitle">Alcune righe non verranno importate</div><div class="adesc">Correggi il CSV e riprova, oppure importa solo le righe valide.</div></div></div>`:''}
+    <div class="import-preview"><table><thead><tr><th>Riga</th><th>Data</th><th>Tipo</th><th>Importo</th><th>Descrizione</th><th>Conto</th><th>Categoria</th><th>Note</th></tr></thead><tbody>
+      ${parsed.slice(0,80).map(x=>`<tr><td>${x.row}</td><td>${escapeHTML(x.tx.date)}</td><td>${escapeHTML(x.tx.type)}</td><td class="num">${isFinite(x.tx.amount)?fmtEUR(x.tx.amount):'—'}</td><td>${escapeHTML(x.tx.payee)}</td><td>${escapeHTML(state.accounts.find(a=>a.id===x.tx.account)?.name||'—')}</td><td>${escapeHTML(x.tx.category||'—')}</td><td>${x.errors.length?`<div class="import-error">${escapeHTML(x.errors.join(' · '))}</div>`:'OK'}</td></tr>`).join('')}
+    </tbody></table></div>
+    <div class="modal-actions"><button class="btn ghost" id="bulkCancel">Annulla</button><button class="btn" id="bulkImportOk" ${valid.length?'':'disabled'}>Importa ${valid.length} movimenti validi</button></div>
+  </div></div>`;
+  document.getElementById('bulkBg').addEventListener('click',e=>{ if(e.target.id==='bulkBg') closeModal(); });
+  document.getElementById('bulkClose').addEventListener('click',closeModal);
+  document.getElementById('bulkCancel').addEventListener('click',closeModal);
+  document.getElementById('bulkImportOk').addEventListener('click',()=>{
+    state.transactions.push(...valid.map(x=>x.tx));
+    state.transactions.sort((a,b)=>a.date<b.date?1:-1);
+    saveState(); closeModal(); render(); toast(`${valid.length} movimenti importati`);
+  });
+}
+function handleBulkImportFile(file){
+  if(!file) return;
+  const reader=new FileReader();
+  reader.onload=()=>openBulkImportModal(reader.result);
+  reader.readAsText(file);
 }
 
 /* ============ BIND PAGE EVENTS ============ */
@@ -1467,6 +1590,14 @@ function bindPageEvents(){
     const label=txFilterCat||txFilterMonth?'i movimenti filtrati':'tutti i movimenti';
     openConfirm(`Eliminare ${label}?`,`Verranno rimossi ${list.length} movimenti. L'operazione non è reversibile.`,()=>{ removeTx(list.map(t=>t.id)); selectedTxIds=new Set(); render(); toast(`${list.length} movimenti eliminati`); });
   });
+
+
+  const tplBtn=document.getElementById('downloadTxTemplateBtn');
+  if(tplBtn) tplBtn.addEventListener('click',downloadTxTemplate);
+  const bulkBtn=document.getElementById('bulkImportTxBtn');
+  const bulkFile=document.getElementById('bulkImportTxFile');
+  if(bulkBtn&&bulkFile) bulkBtn.addEventListener('click',()=>bulkFile.click());
+  if(bulkFile) bulkFile.addEventListener('change',()=>{ handleBulkImportFile(bulkFile.files[0]); bulkFile.value=''; });
 
   // CATEGORIES
   const addCatBtn=document.getElementById('addCatBtn');

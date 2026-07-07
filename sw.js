@@ -1,4 +1,4 @@
-const CACHE_NAME = 'libretto-v20-1-cache';
+const CACHE_NAME = 'libretto-v21-cache';
 const APP_SHELL = [
   './',
   './index.html',
