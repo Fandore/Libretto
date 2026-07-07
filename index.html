@@ -223,11 +223,15 @@
 
   /* app login / user identity */
   .sidebar-user-root{margin:-20px 0 20px;padding:0 6px;}
-  .user-pill{display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:9px 10px;font-size:13px;color:var(--cream);width:100%;}
+  .user-pill{display:flex;flex-direction:column;gap:9px;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:10px;font-size:13px;color:var(--cream);width:100%;}
+  .user-pill-main{display:flex;align-items:center;gap:10px;width:100%;min-width:0;}
   .user-pill .avatar{width:30px;height:30px;border-radius:50%;background:var(--gold);color:var(--ink);display:flex;align-items:center;justify-content:center;font-weight:700;font-family:'Fraunces',serif;flex-shrink:0;}
-  .user-pill .uemail{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--cream-dim);}
-  .user-pill button{background:none;border:none;color:var(--cream-dim);cursor:pointer;font-family:inherit;font-size:12px;padding:3px 6px;border-radius:6px;margin-left:auto;}
+  .user-pill .uinfo{min-width:0;flex:1;}
+  .user-pill .uemail{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--cream-dim);}
+  .user-pill-actions{display:flex;gap:8px;width:100%;}
+  .user-pill button{flex:1;background:transparent;border:1px solid var(--line);color:var(--cream-dim);cursor:pointer;font-family:inherit;font-size:12px;padding:6px 8px;border-radius:8px;}
   .user-pill button:hover{background:var(--surface-3);color:var(--cream);}
+  .user-pill button.danger-mini:hover{background:var(--coral-soft);border-color:var(--coral);color:var(--coral);}
   .auth-gate{min-height:calc(100vh - 110px);display:flex;align-items:center;justify-content:center;padding:20px 0;}
   .auth-card{width:100%;max-width:520px;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:32px;box-shadow:0 18px 50px rgba(0,0,0,.22);}
   .auth-logo{display:flex;align-items:center;gap:12px;margin-bottom:24px;}
@@ -238,7 +242,7 @@
   .auth-mode button{flex:1;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface-2);color:var(--cream-dim);font-family:inherit;font-weight:700;cursor:pointer;}
   .auth-mode button.active{background:var(--gold-soft);border-color:var(--gold);color:var(--gold);}
   .auth-small{font-size:12.5px;color:var(--cream-dim);line-height:1.45;margin-top:14px;}
-  @media(max-width:980px){.auth-card{padding:24px;}.sidebar-user-root{margin:-18px 0 18px;}.user-pill .uemail{max-width:115px;}}
+  @media(max-width:980px){.auth-card{padding:24px;}.sidebar-user-root{margin:-18px 0 18px;}}
 
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--surface-3);color:var(--cream);padding:11px 20px;border-radius:10px;font-size:13.5px;border:1px solid var(--line);z-index:60;box-shadow:0 6px 18px rgba(0,0,0,.3);white-space:nowrap;}
   .confirm-modal{max-width:380px;}
@@ -499,7 +503,7 @@ function seedTransactions(){
 }
 
 /* ============ PERSISTENCE — STANDALONE BROWSER ============ */
-const APP_VERSION = '22.0-dashboard-account-controls';
+const APP_VERSION = '22.1-sidebar-user-recurring-summary';
 const PRECONFIGURED_SUPABASE_URL = 'https://marvmbewsgxrabirugkk.supabase.co';
 const PRECONFIGURED_SUPABASE_ANON_KEY = 'sb_publishable_Jsd4sX6_6pNCUqHIcun4lA_9F81WlPg';
 const STORAGE_KEY = 'libretto-v2-standalone-state';
@@ -552,7 +556,12 @@ function updateUserPill(){
   const root=document.getElementById('userPillRoot');
   if(!root) return;
   if(cloud.user){
-    root.innerHTML=`<div class="user-pill" title="Utente collegato"><div class="avatar">${escapeHTML(userInitial())}</div><div><div style="font-weight:700;line-height:1">Utente attivo</div><div class="uemail">${escapeHTML(cloud.user.email||cloud.user.id)}</div></div><button id="pillLogoutBtn" type="button">Esci</button></div>`;
+    root.innerHTML=`<div class="user-pill" title="Utente collegato">
+      <div class="user-pill-main"><div class="avatar">${escapeHTML(userInitial())}</div><div class="uinfo"><div style="font-weight:700;line-height:1">Utente attivo</div><div class="uemail">${escapeHTML(cloud.user.email||cloud.user.id)}</div></div></div>
+      <div class="user-pill-actions"><button id="pillCloudBtn" type="button">Cloud</button><button id="pillLogoutBtn" class="danger-mini" type="button">Esci</button></div>
+    </div>`;
+    const c=document.getElementById('pillCloudBtn');
+    if(c) c.addEventListener('click',()=>setPage('cloud'));
     const b=document.getElementById('pillLogoutBtn');
     if(b) b.addEventListener('click',async()=>{ if(cloud.client) await cloud.client.auth.signOut(); cloud.user=null; render(); toast('Logout effettuato'); });
   }else root.innerHTML='';
@@ -785,6 +794,44 @@ function fixedExpenses(){
   return Object.values(map).sort((a,b)=>b.amount-a.amount);
 }
 function monthlyFixedTotal(){ return fixedExpenses().filter(f=>f.freq!=='Settimanale').reduce((s,f)=>s+f.amount,0)+fixedExpenses().filter(f=>f.freq==='Settimanale').reduce((s,f)=>s+f.amount*4.33,0); }
+
+function recurringMonthlyEquivalent(amount,freq){
+  if(freq==='Settimanale') return amount*4.33;
+  if(freq==='Annuale') return amount/12;
+  return amount;
+}
+function recurringSummaryByCategory(selectedAccount='all'){
+  const items=[];
+  state.transactions.filter(t=>isRealExpense(t)&&t.recurring&&txMatchesAccount(t,selectedAccount)).forEach(t=>{
+    items.push({payee:t.payee,category:t.category,amount:t.amount,freq:t.recurringFreq||'Mensile',source:'manuale'});
+  });
+  detectRecurring().filter(r=>r.type==='out').forEach(r=>{
+    const matches=state.transactions.some(t=>String(t.payee||'').toLowerCase()===String(r.payee||'').toLowerCase() && txMatchesAccount(t,selectedAccount));
+    const already=items.some(x=>String(x.payee||'').toLowerCase()===String(r.payee||'').toLowerCase() && x.category===r.category);
+    if(matches && !already) items.push({payee:r.payee,category:r.category,amount:r.amount,freq:r.freq,source:'rilevata'});
+  });
+  const groups={};
+  items.forEach(it=>{
+    const cat=it.category||'Altro';
+    if(!groups[cat]) groups[cat]={category:cat,total:0,count:0,manual:0,detected:0,items:[]};
+    const monthly=recurringMonthlyEquivalent(parseFloat(it.amount)||0,it.freq);
+    groups[cat].total+=monthly; groups[cat].count+=1; groups[cat].items.push({...it,monthly});
+    if(it.source==='manuale') groups[cat].manual+=1; else groups[cat].detected+=1;
+  });
+  return Object.values(groups).sort((a,b)=>b.total-a.total);
+}
+function recurringSummaryHTML(selectedAccount='all'){
+  const groups=recurringSummaryByCategory(selectedAccount);
+  if(!groups.length) return `<div class="empty">Nessuna spesa ricorrente ancora. Puoi marcarle quando inserisci o modifichi un movimento.</div>`;
+  const total=groups.reduce((s,g)=>s+g.total,0);
+  const max=Math.max(1,...groups.map(g=>g.total));
+  return `<div class="mini-grid" style="grid-template-columns:1fr;margin-bottom:14px;"><div class="mini-kpi"><div class="mlabel">Totale ricorrente stimato</div><div class="mvalue num neg">${fmtEUR(total)}</div><div class="sync-note">equivalente mensile per ${escapeHTML(accountOptionLabel(selectedAccount))}</div></div></div>`+
+    groups.map(g=>`<div class="catbar-row">
+      <div class="catbar-top"><div class="nm">${catIcon(g.category)} ${g.category} <span class="pill rec">${g.count} voc${g.count===1?'e':'i'}</span></div><div class="amt num">${fmtEUR(g.total)}</div></div>
+      <div class="catbar-track"><div class="catbar-fill" style="width:${(g.total/max*100).toFixed(0)}%;background:${catColor(g.category)}"></div></div>
+      <div class="budget-row-foot">${g.items.slice(0,3).map(i=>`${escapeHTML(i.payee||'—')} · ${i.freq} · ${fmtEUR(i.monthly)}/mese`).join(' · ')}${g.items.length>3?' · …':''}</div>
+    </div>`).join('');
+}
 function projectionRows(n=6){
   const incomeAvg=getMonthlySeries(5,0).filter(x=>x.income>0).reduce((a,x,i,arr)=>a+x.income/arr.length,0)||0;
   const fixed=monthlyFixedTotal();
@@ -950,7 +997,6 @@ function renderDashboard(){
   const byCat=spentByCategory(txs);
   const catEntries=Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
   const maxCat=catEntries.length?catEntries[0][1]:1;
-  const recurring=detectRecurring().filter(r=>selectedAccount==='all' || state.transactions.some(t=>String(t.payee||'').toLowerCase()===String(r.payee||'').toLowerCase() && txMatchesAccount(t,selectedAccount)));
   const recent=[...state.transactions].filter(t=>txMatchesAccount(t,selectedAccount)).sort((a,b)=>a.date<b.date?1:-1).slice(0,8);
   return `
   <div class="topbar"><h1>Dashboard</h1><div class="month-switch"><div class="label" title="Ciclo corrente basato sullo stipendio più recente">${periodLabelFromBounds(dash.bounds)}</div></div></div>
@@ -991,12 +1037,8 @@ function renderDashboard(){
         </div>`).join('')}
     </div>
     <div class="card">
-      <h3>Spese ricorrenti rilevate</h3>
-      ${recurring.length===0?`<div class="empty">Aggiungi più movimenti per individuare pattern.</div>`:recurring.slice(0,6).map(r=>`
-        <div class="rec-item">
-          <div><div class="nm">${catIcon(r.category)} ${r.payee}</div><div class="freq">${r.freq} · ${r.count} rilevazioni</div></div>
-          <div style="color:${r.type==='out'?'var(--coral)':'var(--sage)'}" class="num">${r.type==='out'?'-':'+'}${fmtEUR(r.amount)}</div>
-        </div>`).join('')}
+      <h3>Riepilogo spese ricorrenti</h3>
+      ${recurringSummaryHTML(selectedAccount)}
     </div>
   </div>
   <div class="card"><h3>Movimenti recenti — ${escapeHTML(accountOptionLabel(selectedAccount))}</h3><div class="tx-list">${recent.length===0?`<div class="empty">Nessun movimento. Premi + per iniziare.</div>`:recent.map(t=>txRowHTML(t,false)).join('')}</div></div>`;

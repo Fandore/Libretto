@@ -1,10 +1,2 @@
-Libretto v22 - Dashboard per conto
-
-File principali:
-- index.html
-- manifest.webmanifest
-- sw.js
-- libretto-icon.svg
-
+Libretto v22.1 - sidebar utente migliorata e riepilogo spese ricorrenti per categoria.
 Carica tutti i file nella root del repository GitHub Pages.
-Apri: https://fandore.github.io/Libretto/?v=22
