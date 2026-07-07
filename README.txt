@@ -1,9 +1,10 @@
-Libretto v20.1 PWA package
+Libretto v22 - Dashboard per conto
 
-Carica tutti questi file nella root del repository GitHub Pages:
+File principali:
 - index.html
 - manifest.webmanifest
 - sw.js
 - libretto-icon.svg
 
-Poi apri: https://fandore.github.io/Libretto/?v=20-1
+Carica tutti i file nella root del repository GitHub Pages.
+Apri: https://fandore.github.io/Libretto/?v=22

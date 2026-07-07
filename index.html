@@ -222,11 +222,12 @@
 
 
   /* app login / user identity */
-  .user-pill{position:fixed;top:18px;right:24px;z-index:35;display:flex;align-items:center;gap:10px;background:var(--surface);border:1px solid var(--line);border-radius:999px;padding:8px 12px;box-shadow:0 6px 18px rgba(0,0,0,.22);font-size:13px;color:var(--cream);}
-  .user-pill .avatar{width:28px;height:28px;border-radius:50%;background:var(--gold);color:var(--ink);display:flex;align-items:center;justify-content:center;font-weight:700;font-family:'Fraunces',serif;}
-  .user-pill .uemail{max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--cream-dim);}
-  .user-pill button{background:none;border:none;color:var(--cream-dim);cursor:pointer;font-family:inherit;font-size:12px;padding:3px 6px;border-radius:6px;}
-  .user-pill button:hover{background:var(--surface-2);color:var(--cream);}
+  .sidebar-user-root{margin:-20px 0 20px;padding:0 6px;}
+  .user-pill{display:flex;align-items:center;gap:10px;background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:9px 10px;font-size:13px;color:var(--cream);width:100%;}
+  .user-pill .avatar{width:30px;height:30px;border-radius:50%;background:var(--gold);color:var(--ink);display:flex;align-items:center;justify-content:center;font-weight:700;font-family:'Fraunces',serif;flex-shrink:0;}
+  .user-pill .uemail{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--cream-dim);}
+  .user-pill button{background:none;border:none;color:var(--cream-dim);cursor:pointer;font-family:inherit;font-size:12px;padding:3px 6px;border-radius:6px;margin-left:auto;}
+  .user-pill button:hover{background:var(--surface-3);color:var(--cream);}
   .auth-gate{min-height:calc(100vh - 110px);display:flex;align-items:center;justify-content:center;padding:20px 0;}
   .auth-card{width:100%;max-width:520px;background:var(--surface);border:1px solid var(--line);border-radius:18px;padding:32px;box-shadow:0 18px 50px rgba(0,0,0,.22);}
   .auth-logo{display:flex;align-items:center;gap:12px;margin-bottom:24px;}
@@ -237,7 +238,7 @@
   .auth-mode button{flex:1;padding:10px 12px;border-radius:10px;border:1px solid var(--line);background:var(--surface-2);color:var(--cream-dim);font-family:inherit;font-weight:700;cursor:pointer;}
   .auth-mode button.active{background:var(--gold-soft);border-color:var(--gold);color:var(--gold);}
   .auth-small{font-size:12.5px;color:var(--cream-dim);line-height:1.45;margin-top:14px;}
-  @media(max-width:980px){.user-pill{top:18px;right:16px;max-width:calc(100vw - 72px);}.user-pill .uemail{max-width:150px;}.auth-card{padding:24px;}}
+  @media(max-width:980px){.auth-card{padding:24px;}.sidebar-user-root{margin:-18px 0 18px;}.user-pill .uemail{max-width:115px;}}
 
   .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--surface-3);color:var(--cream);padding:11px 20px;border-radius:10px;font-size:13.5px;border:1px solid var(--line);z-index:60;box-shadow:0 6px 18px rgba(0,0,0,.3);white-space:nowrap;}
   .confirm-modal{max-width:380px;}
@@ -294,6 +295,7 @@
         <div class="sub">finanze personali</div>
       </div>
     </div>
+    <div id="userPillRoot" class="sidebar-user-root"></div>
     <nav id="nav">
       <button class="navbtn" data-page="dashboard">📒 Dashboard</button>
       <button class="navbtn" data-page="transactions">📑 Movimenti</button>
@@ -320,8 +322,6 @@
 <button class="fab" id="fabAdd" title="Aggiungi movimento">+</button>
 <div id="modalRoot"></div>
 <div id="toastRoot"></div>
-<div id="userPillRoot"></div>
-
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
 /* ============ DEFAULT DATA ============ */
@@ -499,7 +499,7 @@ function seedTransactions(){
 }
 
 /* ============ PERSISTENCE — STANDALONE BROWSER ============ */
-const APP_VERSION = '21.0-bulk-csv';
+const APP_VERSION = '22.0-dashboard-account-controls';
 const PRECONFIGURED_SUPABASE_URL = 'https://marvmbewsgxrabirugkk.supabase.co';
 const PRECONFIGURED_SUPABASE_ANON_KEY = 'sb_publishable_Jsd4sX6_6pNCUqHIcun4lA_9F81WlPg';
 const STORAGE_KEY = 'libretto-v2-standalone-state';
@@ -731,6 +731,35 @@ function accountBalance(accountId){
 }
 function totalAccountBalance(){ return state.accounts.reduce((s,a)=>s+accountBalance(a.id),0); }
 function accountBalanceMap(){ const m={}; state.accounts.forEach(a=>m[a.id]=accountBalance(a.id)); return m; }
+function selectedDashboardAccountId(){
+  const id=state.settings && state.settings.dashboardAccountId;
+  if(id && state.accounts.some(a=>a.id===id)) return id;
+  return state.accounts[0] ? state.accounts[0].id : 'all';
+}
+function dashboardShowBalances(){ return !(state.settings && state.settings.dashboardShowBalances===false); }
+function txMatchesAccount(t,accountId){
+  if(!accountId || accountId==='all') return true;
+  return t.account===accountId || (isTransfer(t) && t.transferTo===accountId);
+}
+function txForDashboardAccount(txs,accountId){ return txs.filter(t=>txMatchesAccount(t,accountId)); }
+function accountOptionLabel(accountId){
+  if(accountId==='all') return 'Tutti i conti';
+  const a=state.accounts.find(x=>x.id===accountId);
+  return a ? a.name : 'Conto';
+}
+function dashboardBalanceHTML(accountId){
+  if(!dashboardShowBalances()) return `<div class="card kpi"><div class="label">Saldo nascosto</div><div class="value num">••••••</div><div class="delta">Riattiva la visualizzazione dalla Dashboard</div></div>`;
+  if(accountId && accountId!=='all'){
+    const a=state.accounts.find(x=>x.id===accountId);
+    return `<div class="card kpi"><div class="label">Saldo ${escapeHTML(a?a.name:'conto')}</div><div class="value num">${fmtEUR(accountBalance(accountId))}</div><div class="delta">saldo iniziale + movimenti</div></div>`;
+  }
+  return `<div class="card kpi"><div class="label">Saldo totale</div><div class="value num">${fmtEUR(totalAccountBalance())}</div><div class="delta">su ${state.accounts.length} conti</div></div>`;
+}
+function accountBalancesCardHTML(){
+  if(!dashboardShowBalances()) return '';
+  return `<div class="card" style="margin-bottom:16px;"><h3>Saldi per conto</h3>${state.accounts.map(a=>`
+    <div class="rec-item"><div><div class="nm">🏦 ${escapeHTML(a.name)}</div><div class="freq">Saldo iniziale: <span class="num">${fmtEUR(parseFloat(a.initialBalance)||0)}</span></div></div><div class="num" style="color:${accountBalance(a.id)>=0?'var(--sage)':'var(--coral)'}">${fmtEUR(accountBalance(a.id))}</div></div>`).join('')}</div>`;
+}
 function monthKeyFromDate(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
 function monthLabel(key){ const [y,m]=key.split('-').map(Number); return periodLabel(y,m-1); }
 function addMonths(date,n){ const d=new Date(date); d.setMonth(d.getMonth()+n); return d; }
@@ -912,27 +941,40 @@ function budgetSummaryHTML(txs, compact=false){
 /* ============ DASHBOARD ============ */
 function renderDashboard(){
   const dash=activeDashboardCycle();
-  const txs=txInBounds(dash.bounds);
+  const allCycleTxs=txInBounds(dash.bounds);
+  const selectedAccount=selectedDashboardAccountId();
+  const txs=txForDashboardAccount(allCycleTxs,selectedAccount);
   const income=txs.filter(t=>t.type==='in'&&!isTransfer(t)).reduce((s,t)=>s+t.amount,0);
   const expense=txs.filter(isRealExpense).reduce((s,t)=>s+t.amount,0);
-  const totalBalance=totalAccountBalance();
   const net=income-expense;
   const byCat=spentByCategory(txs);
   const catEntries=Object.entries(byCat).sort((a,b)=>b[1]-a[1]);
   const maxCat=catEntries.length?catEntries[0][1]:1;
-  const recurring=detectRecurring();
-  const recent=[...state.transactions].sort((a,b)=>a.date<b.date?1:-1).slice(0,8);
+  const recurring=detectRecurring().filter(r=>selectedAccount==='all' || state.transactions.some(t=>String(t.payee||'').toLowerCase()===String(r.payee||'').toLowerCase() && txMatchesAccount(t,selectedAccount)));
+  const recent=[...state.transactions].filter(t=>txMatchesAccount(t,selectedAccount)).sort((a,b)=>a.date<b.date?1:-1).slice(0,8);
   return `
   <div class="topbar"><h1>Dashboard</h1><div class="month-switch"><div class="label" title="Ciclo corrente basato sullo stipendio più recente">${periodLabelFromBounds(dash.bounds)}</div></div></div>
   ${alertsHTML(dash.year,dash.month)}
-  <div class="grid kpis">
-    <div class="card kpi"><div class="label">Saldo totale</div><div class="value num">${fmtEUR(totalBalance)}</div><div class="delta">su ${state.accounts.length} conti</div></div>
-    <div class="card kpi"><div class="label">Entrate ciclo</div><div class="value num pos">${fmtEUR(income)}</div></div>
-    <div class="card kpi"><div class="label">Uscite ciclo</div><div class="value num neg">${fmtEUR(expense)}</div></div>
-    <div class="card kpi"><div class="label">Risparmio ciclo</div><div class="value num ${net>=0?'pos':'neg'}">${fmtEUR(net)}</div></div>
-  </div>
   <div class="card" style="margin-bottom:16px;">
-    <h3>Andamento mese per mese</h3>
+    <h3>Vista dashboard</h3>
+    <div class="filters-row" style="margin-bottom:0;align-items:center;">
+      <select id="dashboardAccountSelect">
+        <option value="all" ${selectedAccount==='all'?'selected':''}>Tutti i conti</option>
+        ${state.accounts.map(a=>`<option value="${a.id}" ${selectedAccount===a.id?'selected':''}>${escapeHTML(a.name)}</option>`).join('')}
+      </select>
+      <button class="btn small ghost" id="toggleDashboardBalances">${dashboardShowBalances()?'🙈 Nascondi saldi':'👁️ Mostra saldi'}</button>
+      <span class="empty" style="padding:0;text-align:left">I valori sotto sono riferiti a: <b>${escapeHTML(accountOptionLabel(selectedAccount))}</b></span>
+    </div>
+  </div>
+  <div class="grid kpis">
+    ${dashboardBalanceHTML(selectedAccount)}
+    <div class="card kpi"><div class="label">Entrate ciclo</div><div class="value num pos">${fmtEUR(income)}</div><div class="delta">${escapeHTML(accountOptionLabel(selectedAccount))}</div></div>
+    <div class="card kpi"><div class="label">Uscite ciclo</div><div class="value num neg">${fmtEUR(expense)}</div><div class="delta">spese reali, esclusi trasferimenti</div></div>
+    <div class="card kpi"><div class="label">Risparmio ciclo</div><div class="value num ${net>=0?'pos':'neg'}">${fmtEUR(net)}</div><div class="delta">entrate - uscite</div></div>
+  </div>
+  ${accountBalancesCardHTML()}
+  <div class="card" style="margin-bottom:16px;">
+    <h3>Andamento ciclo per ciclo — ${escapeHTML(accountOptionLabel(selectedAccount))}</h3>
     <div class="chart-wrap"><canvas class="lib-chart" id="dashboardTrend"></canvas></div>
   </div>
   <div class="card" style="margin-bottom:16px;">
@@ -942,7 +984,7 @@ function renderDashboard(){
   <div class="grid row2" style="margin-bottom:16px;">
     <div class="card">
       <h3>Spese per categoria</h3>
-      ${catEntries.length===0?`<div class="empty">Ancora nessuna spesa in questo ciclo.</div>`:catEntries.map(([cat,amt])=>`
+      ${catEntries.length===0?`<div class="empty">Ancora nessuna spesa in questo ciclo per il conto selezionato.</div>`:catEntries.map(([cat,amt])=>`
         <div class="catbar-row">
           <div class="catbar-top"><div class="nm">${catIcon(cat)} ${cat}</div><div class="amt num">${fmtEUR(amt)}</div></div>
           <div class="catbar-track"><div class="catbar-fill" style="width:${(amt/maxCat*100).toFixed(0)}%;background:${catColor(cat)}"></div></div>
@@ -957,43 +999,61 @@ function renderDashboard(){
         </div>`).join('')}
     </div>
   </div>
-  <div class="card"><h3>Movimenti recenti</h3><div class="tx-list">${recent.length===0?`<div class="empty">Nessun movimento. Premi + per iniziare.</div>`:recent.map(t=>txRowHTML(t,false)).join('')}</div></div>`;
+  <div class="card"><h3>Movimenti recenti — ${escapeHTML(accountOptionLabel(selectedAccount))}</h3><div class="tx-list">${recent.length===0?`<div class="empty">Nessun movimento. Premi + per iniziare.</div>`:recent.map(t=>txRowHTML(t,false)).join('')}</div></div>`;
 }
-
 
 /* ============ ANALYTICS ============ */
 function renderAnalytics(){
-  const series=getMonthlySeries(5,0);
+  const dash=activeDashboardCycle();
+  const selectedAccount=selectedDashboardAccountId();
+  const series=getMonthlySeries(5,0,dash.year,dash.month).map(row=>{
+    const [y,m]=row.key.split('-').map(Number);
+    const txs=txForDashboardAccount(txInPeriod(y,m-1),selectedAccount);
+    const income=txs.filter(t=>t.type==='in'&&!isTransfer(t)).reduce((s,t)=>s+t.amount,0);
+    const expense=txs.filter(isRealExpense).reduce((s,t)=>s+t.amount,0);
+    const transfers=txs.filter(isTransfer).reduce((s,t)=>s+t.amount,0);
+    return {key:row.key,label:row.label,income,expense,net:income-expense,transfers};
+  });
   const current=series[series.length-1]||{income:0,expense:0,net:0};
   const fixed=fixedExpenses();
   const fixedTotal=monthlyFixedTotal();
   const proj=projectionRows(6);
-  const txs=txInMonth(viewYear,viewMonth);
+  const txs=txForDashboardAccount(txInBounds(dash.bounds),selectedAccount);
   const byCat=spentByCategory(txs);
   const maxCat=Math.max(1,...Object.values(byCat));
   return `
-  <div class="topbar"><h1>Analisi over time</h1>${monthSwitchHTML()}</div>
-  <div class="mini-grid">
-    <div class="mini-kpi"><div class="mlabel">Bilancio ciclo selezionato</div><div class="mvalue num ${current.net>=0?'pos':'neg'}">${fmtEUR(current.net)}</div></div>
-    <div class="mini-kpi"><div class="mlabel">Spese fisse stimate / mese</div><div class="mvalue num neg">${fmtEUR(fixedTotal)}</div></div>
-    <div class="mini-kpi"><div class="mlabel">Saldo previsto tra 6 mesi</div><div class="mvalue num ${proj.at(-1)?.balance>=0?'pos':'neg'}">${fmtEUR(proj.at(-1)?.balance||0)}</div></div>
+  <div class="topbar"><h1>Analisi over time</h1><div class="month-switch"><div class="label" title="Ciclo corrente basato sullo stipendio più recente">${periodLabelFromBounds(dash.bounds)}</div></div></div>
+  <div class="card" style="margin-bottom:16px;">
+    <h3>Ambito analisi</h3>
+    <div class="filters-row" style="margin-bottom:0;align-items:center;">
+      <select id="dashboardAccountSelect">
+        <option value="all" ${selectedAccount==='all'?'selected':''}>Tutti i conti</option>
+        ${state.accounts.map(a=>`<option value="${a.id}" ${selectedAccount===a.id?'selected':''}>${escapeHTML(a.name)}</option>`).join('')}
+      </select>
+      <span class="empty" style="padding:0;text-align:left">Analisi allineata al ciclo spese: <b>${periodLabelFromBounds(dash.bounds)}</b></span>
+    </div>
   </div>
-  <div class="card" style="margin-bottom:16px;"><h3>Entrate, uscite e bilancio netto</h3><div class="chart-wrap"><canvas class="lib-chart" id="analyticsTrend"></canvas></div></div>
+  <div class="mini-grid">
+    <div class="mini-kpi"><div class="mlabel">Bilancio ciclo corrente</div><div class="mvalue num ${current.net>=0?'pos':'neg'}">${fmtEUR(current.net)}</div></div>
+    <div class="mini-kpi"><div class="mlabel">Spese fisse stimate / ciclo</div><div class="mvalue num neg">${fmtEUR(fixedTotal)}</div></div>
+    <div class="mini-kpi"><div class="mlabel">Saldo previsto tra 6 cicli</div><div class="mvalue num ${proj.at(-1)?.balance>=0?'pos':'neg'}">${fmtEUR(proj.at(-1)?.balance||0)}</div></div>
+  </div>
+  <div class="card" style="margin-bottom:16px;"><h3>Entrate, uscite e bilancio netto — ciclo per ciclo</h3><div class="chart-wrap"><canvas class="lib-chart" id="analyticsTrend"></canvas></div></div>
   <div class="grid row2" style="margin-bottom:16px;">
-    <div class="card"><h3>Dettaglio per categoria — ${periodLabel(viewYear,viewMonth)}</h3>
-      ${Object.keys(byCat).length===0?`<div class="empty">Nessuna uscita reale nel mese selezionato.</div>`:Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([cat,amt])=>`
+    <div class="card"><h3>Dettaglio per categoria — ${periodLabelFromBounds(dash.bounds)}</h3>
+      ${Object.keys(byCat).length===0?`<div class="empty">Nessuna uscita reale nel ciclo corrente per il conto selezionato.</div>`:Object.entries(byCat).sort((a,b)=>b[1]-a[1]).map(([cat,amt])=>`
         <div class="catbar-row"><div class="catbar-top"><div class="nm">${catIcon(cat)} ${cat}</div><div class="amt num">${fmtEUR(amt)}</div></div><div class="catbar-track"><div class="catbar-fill" style="width:${(amt/maxCat*100).toFixed(0)}%;background:${catColor(cat)}"></div></div></div>`).join('')}
     </div>
     <div class="card"><h3>Spese fisse e ricorrenti</h3>
-      ${fixed.length===0?`<div class="empty">Marca le uscite ricorrenti o inserisci più mesi di dati per rilevarle.</div>`:fixed.map(f=>`
+      ${fixed.length===0?`<div class="empty">Marca le uscite ricorrenti o inserisci più cicli di dati per rilevarle.</div>`:fixed.map(f=>`
         <div class="rec-item"><div><div class="nm">${catIcon(f.category)} ${escapeHTML(f.payee)}</div><div class="freq">${f.freq} · ${f.source}</div></div><div class="num" style="color:var(--coral)">-${fmtEUR(f.amount)}</div></div>`).join('')}
     </div>
   </div>
   <div class="card"><h3>Proiezione cashflow futuro</h3>
-    <table class="analysis-table"><thead><tr><th>Mese</th><th>Entrate stimate</th><th>Spese fisse</th><th>Netto stimato</th><th>Saldo totale previsto</th></tr></thead><tbody>
+    <table class="analysis-table"><thead><tr><th>Ciclo</th><th>Entrate stimate</th><th>Spese fisse</th><th>Netto stimato</th><th>Saldo totale previsto</th></tr></thead><tbody>
       ${proj.map(r=>`<tr><td>${r.label}</td><td class="num" style="color:var(--sage)">${fmtEUR(r.income)}</td><td class="num" style="color:var(--coral)">${fmtEUR(r.fixed)}</td><td class="num ${r.net>=0?'pos':'neg'}">${fmtEUR(r.net)}</td><td class="num">${fmtEUR(r.balance)}</td></tr>`).join('')}
     </tbody></table>
-    <div class="empty" style="text-align:left;padding-bottom:0">La proiezione usa la media delle entrate degli ultimi mesi e le spese ricorrenti/manuali. I trasferimenti tra conti non vengono trattati come spese reali.</div>
+    <div class="empty" style="text-align:left;padding-bottom:0">La proiezione usa la media delle entrate degli ultimi cicli e le spese ricorrenti/manuali. I trasferimenti tra conti non vengono trattati come spese reali.</div>
   </div>`;
 }
 
@@ -1490,8 +1550,13 @@ function bindPageEvents(){
 
   // alert dismiss
   document.querySelectorAll('[data-dismiss]').forEach(b=>b.addEventListener('click',()=>dismissAlert(b.dataset.dismiss)));
-  if(document.getElementById('dashboardTrend')) { const dash=activeDashboardCycle(); drawMonthlyChart('dashboardTrend',getMonthlySeries(5,0,dash.year,dash.month)); }
-  if(document.getElementById('analyticsTrend')) drawMonthlyChart('analyticsTrend',getMonthlySeries(5,0));
+  const dashboardAccountSelect=document.getElementById('dashboardAccountSelect');
+  if(dashboardAccountSelect) dashboardAccountSelect.addEventListener('change',()=>{ state.settings.dashboardAccountId=dashboardAccountSelect.value; saveState(); render(); });
+  const toggleDashboardBalances=document.getElementById('toggleDashboardBalances');
+  if(toggleDashboardBalances) toggleDashboardBalances.addEventListener('click',()=>{ state.settings.dashboardShowBalances=!dashboardShowBalances(); saveState(); render(); });
+
+  if(document.getElementById('dashboardTrend')) { const dash=activeDashboardCycle(); const acc=selectedDashboardAccountId(); const ser=getMonthlySeries(5,0,dash.year,dash.month).map(row=>{ const [y,m]=row.key.split('-').map(Number); const txs=txForDashboardAccount(txInPeriod(y,m-1),acc); const income=txs.filter(t=>t.type==='in'&&!isTransfer(t)).reduce((s,t)=>s+t.amount,0); const expense=txs.filter(isRealExpense).reduce((s,t)=>s+t.amount,0); return Object.assign({},row,{income,expense,net:income-expense}); }); drawMonthlyChart('dashboardTrend',ser); }
+  if(document.getElementById('analyticsTrend')) { const dash=activeDashboardCycle(); const acc=selectedDashboardAccountId(); const ser=getMonthlySeries(5,0,dash.year,dash.month).map(row=>{ const [y,m]=row.key.split('-').map(Number); const txs=txForDashboardAccount(txInPeriod(y,m-1),acc); const income=txs.filter(t=>t.type==='in'&&!isTransfer(t)).reduce((s,t)=>s+t.amount,0); const expense=txs.filter(isRealExpense).reduce((s,t)=>s+t.amount,0); return Object.assign({},row,{income,expense,net:income-expense}); }); drawMonthlyChart('analyticsTrend',ser); }
 
   // single delete
   document.querySelectorAll('[data-del]').forEach(b=>b.addEventListener('click',()=>{
@@ -1543,7 +1608,7 @@ function bindPageEvents(){
   if(cloudPushBtn) cloudPushBtn.addEventListener('click',async()=>{ const ok=await cloudSaveNow(); render(); toast(ok?'Dati salvati nel cloud':'Salvataggio cloud non riuscito'); });
 
   const cloudHardReloadBtn=document.getElementById('cloudHardReloadBtn');
-  if(cloudHardReloadBtn) cloudHardReloadBtn.addEventListener('click',()=>{ location.href=location.pathname+'?v=20&refresh='+Date.now(); });
+  if(cloudHardReloadBtn) cloudHardReloadBtn.addEventListener('click',()=>{ location.href=location.pathname+'?v=22&refresh='+Date.now(); });
   const copySqlBtn=document.getElementById('copySqlBtn');
   if(copySqlBtn) copySqlBtn.addEventListener('click',()=>{ const txt=document.querySelector('.code-block')?.textContent||''; navigator.clipboard.writeText(txt).then(()=>toast('SQL copiato')); });
 
@@ -1934,6 +1999,8 @@ function migrateState(){
   state.transactions.forEach(t=>{ if(!t.movementType) t.movementType='standard'; if(t.recurring===undefined) t.recurring=false; });
   if(!state.goals) state.goals=[];
   if(!state.settings) state.settings={};
+  if(state.settings.dashboardShowBalances===undefined) state.settings.dashboardShowBalances=true;
+  if(!state.settings.dashboardAccountId && state.accounts[0]) state.settings.dashboardAccountId=state.accounts[0].id;
   ensureMeta();
   // Il ciclo budget ora è derivato dai movimenti Stipendio, non da un giorno fisso.
 }
