@@ -140,6 +140,14 @@
 
   /* analytics / projections */
   .chart-wrap{height:260px;position:relative;}
+
+  /* v22.2 mobile chart readability */
+  @media(max-width:760px){
+    .chart-wrap{height:340px;overflow:hidden;}
+    canvas.lib-chart{height:340px;}
+    .card h3{line-height:1.25;}
+  }
+
   canvas.lib-chart{width:100%;height:260px;display:block;background:rgba(255,255,255,0.015);border-radius:10px;}
   .mini-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:16px;}
   .mini-kpi{background:var(--surface-2);border:1px solid var(--line);border-radius:12px;padding:14px;}
@@ -772,18 +780,43 @@ function accountBalancesCardHTML(){
 function monthKeyFromDate(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
 function monthLabel(key){ const [y,m]=key.split('-').map(Number); return periodLabel(y,m-1); }
 function addMonths(date,n){ const d=new Date(date); d.setMonth(d.getMonth()+n); return d; }
-function getMonthlySeries(monthsBack=5, monthsForward=0, baseYear=viewYear, baseMonth=viewMonth){
+function firstMovementCycleKey(accountId='all'){
+  const list=state.transactions
+    .filter(t=>txMatchesAccount(t,accountId))
+    .sort((a,b)=>String(a.date).localeCompare(String(b.date)));
+  if(!list.length) return null;
+  return periodKeyFromDate(list[0].date);
+}
+function compactCycleLabel(key){
+  const [y,m]=key.split('-').map(Number);
+  const b=periodBounds(y,m-1);
+  const start=b.start.toLocaleDateString('it-IT',{day:'2-digit',month:'short'}).replace('.', '');
+  const end=b.end.toLocaleDateString('it-IT',{day:'2-digit',month:'short'}).replace('.', '');
+  return `${start}–${end}`;
+}
+function getMonthlySeries(monthsBack=5, monthsForward=0, baseYear=viewYear, baseMonth=viewMonth, accountId='all'){
   const base=new Date(baseYear,baseMonth,1);
+  const endKey=monthKeyFromDate(addMonths(base,monthsForward));
+  const startByWindow=monthKeyFromDate(addMonths(base,-monthsBack));
+  const firstKey=firstMovementCycleKey(accountId);
+  const startKey=firstKey && firstKey>startByWindow ? firstKey : startByWindow;
   const keys=[];
-  for(let i=-monthsBack;i<=monthsForward;i++){ keys.push(monthKeyFromDate(addMonths(base,i))); }
+  let cur=startKey;
+  let guard=0;
+  while(cur<=endKey && guard<36){
+    keys.push(cur);
+    const [cy,cm]=cur.split('-').map(Number);
+    cur=monthKeyFromDate(addMonths(new Date(cy,cm-1,1),1));
+    guard++;
+  }
   return keys.map(k=>{
     const [y,m]=k.split('-').map(Number);
-    const txs=txInPeriod(y,m-1);
+    const txs=txForDashboardAccount(txInPeriod(y,m-1),accountId);
     const income=txs.filter(t=>t.type==='in'&&!isTransfer(t)).reduce((s,t)=>s+t.amount,0);
     const expense=txs.filter(isRealExpense).reduce((s,t)=>s+t.amount,0);
     const transfers=txs.filter(isTransfer).reduce((s,t)=>s+t.amount,0);
-    return {key:k,label:monthLabel(k),income,expense,net:income-expense,transfers};
-  });
+    return {key:k,label:monthLabel(k),shortLabel:compactCycleLabel(k),income,expense,net:income-expense,transfers};
+  }).filter(row=>row.income!==0 || row.expense!==0 || row.transfers!==0 || row.key===endKey);
 }
 function fixedExpenses(){
   const explicit=state.transactions.filter(t=>isRealExpense(t)&&t.recurring);
@@ -833,7 +866,7 @@ function recurringSummaryHTML(selectedAccount='all'){
     </div>`).join('');
 }
 function projectionRows(n=6){
-  const incomeAvg=getMonthlySeries(5,0).filter(x=>x.income>0).reduce((a,x,i,arr)=>a+x.income/arr.length,0)||0;
+  const incomeAvg=getMonthlySeries(5,0,viewYear,viewMonth,'all').filter(x=>x.income>0).reduce((a,x,i,arr)=>a+x.income/arr.length,0)||0;
   const fixed=monthlyFixedTotal();
   let start=totalAccountBalance();
   const rows=[]; const base=new Date(viewYear,viewMonth,1);
@@ -844,21 +877,34 @@ function drawMonthlyChart(canvasId,series){
   const canvas=document.getElementById(canvasId); if(!canvas) return;
   const ctx=canvas.getContext('2d'); const rect=canvas.getBoundingClientRect(); const ratio=window.devicePixelRatio||1;
   canvas.width=rect.width*ratio; canvas.height=rect.height*ratio; ctx.scale(ratio,ratio);
-  const w=rect.width,h=rect.height,p=34; ctx.clearRect(0,0,w,h);
-  ctx.font='12px Source Sans 3'; ctx.lineWidth=1;
+  const w=rect.width,h=rect.height;
+  const isMobile=w<520;
+  const p={l:isMobile?42:44,r:isMobile?18:28,t:isMobile?42:34,b:isMobile?64:38};
+  ctx.clearRect(0,0,w,h);
+  ctx.font=(isMobile?'11px':'12px')+' Source Sans 3'; ctx.lineWidth=1;
+  if(!series || !series.length){ ctx.fillStyle='rgba(241,234,217,0.6)'; ctx.textAlign='center'; ctx.fillText('Nessun movimento da mostrare',w/2,h/2); return; }
   const vals=series.flatMap(s=>[s.income,s.expense,Math.abs(s.net)]); const max=Math.max(1,...vals)*1.15;
+  const plotW=w-p.l-p.r, plotH=h-p.t-p.b, zero=h-p.b;
   ctx.strokeStyle='rgba(241,234,217,0.12)'; ctx.fillStyle='rgba(241,234,217,0.55)';
-  for(let i=0;i<4;i++){ const y=p+(h-2*p)*i/3; ctx.beginPath(); ctx.moveTo(p,y); ctx.lineTo(w-p,y); ctx.stroke(); }
-  const groupW=(w-2*p)/series.length; const barW=Math.max(8,groupW*.22);
-  series.forEach((s,i)=>{ const x=p+i*groupW+groupW*.28; const zero=h-p; const incH=(s.income/max)*(h-2*p); const expH=(s.expense/max)*(h-2*p);
+  for(let i=0;i<4;i++){ const y=p.t+plotH*i/3; ctx.beginPath(); ctx.moveTo(p.l,y); ctx.lineTo(w-p.r,y); ctx.stroke(); }
+  const groupW=plotW/Math.max(1,series.length); const barW=Math.max(isMobile?7:8,Math.min(isMobile?15:18,groupW*.22));
+  const labelEvery=isMobile ? Math.ceil(series.length/3) : Math.ceil(series.length/6);
+  series.forEach((s,i)=>{ const x=p.l+i*groupW+groupW*.28; const incH=(s.income/max)*plotH; const expH=(s.expense/max)*plotH;
     ctx.fillStyle='#7ea487'; ctx.fillRect(x,zero-incH,barW,incH);
     ctx.fillStyle='#e2725b'; ctx.fillRect(x+barW+4,zero-expH,barW,expH);
-    ctx.fillStyle='rgba(241,234,217,0.62)'; ctx.textAlign='center'; ctx.fillText(s.label,x+barW, h-10);
+    if(i===0 || i===series.length-1 || i%labelEvery===0){
+      ctx.save(); ctx.fillStyle='rgba(241,234,217,0.62)'; ctx.textAlign=isMobile?'right':'center';
+      if(isMobile){ ctx.translate(x+barW, h-12); ctx.rotate(-Math.PI/5); ctx.fillText(s.shortLabel||s.label,0,0); }
+      else ctx.fillText(s.shortLabel||s.label,x+barW, h-10);
+      ctx.restore();
+    }
   });
-  // net line
   ctx.beginPath(); ctx.strokeStyle='#d6a23c'; ctx.lineWidth=2;
-  series.forEach((s,i)=>{ const x=p+i*groupW+groupW*.5; const y=(h-p)-((s.net+max/2)/max)*(h-2*p); if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); }); ctx.stroke();
-  ctx.fillStyle='rgba(241,234,217,0.75)'; ctx.textAlign='left'; ctx.fillText('Entrate',p,16); ctx.fillStyle='#7ea487'; ctx.fillRect(p+48,8,10,10); ctx.fillStyle='rgba(241,234,217,0.75)'; ctx.fillText('Uscite',p+68,16); ctx.fillStyle='#e2725b'; ctx.fillRect(p+110,8,10,10); ctx.fillStyle='rgba(241,234,217,0.75)'; ctx.fillText('Netto',p+130,16); ctx.fillStyle='#d6a23c'; ctx.fillRect(p+170,8,10,10);
+  series.forEach((s,i)=>{ const x=p.l+i*groupW+groupW*.5; const y=zero-((s.net+max/2)/max)*plotH; if(i===0) ctx.moveTo(x,y); else ctx.lineTo(x,y); }); ctx.stroke();
+  // compact legend
+  const ly=16; let lx=p.l;
+  function legend(label,color){ ctx.fillStyle=color; ctx.fillRect(lx,ly-8,10,10); ctx.fillStyle='rgba(241,234,217,0.75)'; ctx.textAlign='left'; ctx.fillText(label,lx+15,ly); lx+=isMobile?78:90; }
+  legend('Entrate','#7ea487'); legend('Uscite','#e2725b'); legend('Netto','#d6a23c');
 }
 
 
@@ -1048,7 +1094,7 @@ function renderDashboard(){
 function renderAnalytics(){
   const dash=activeDashboardCycle();
   const selectedAccount=selectedDashboardAccountId();
-  const series=getMonthlySeries(5,0,dash.year,dash.month).map(row=>{
+  const series=getMonthlySeries(5,0,dash.year,dash.month,selectedAccount).map(row=>{
     const [y,m]=row.key.split('-').map(Number);
     const txs=txForDashboardAccount(txInPeriod(y,m-1),selectedAccount);
     const income=txs.filter(t=>t.type==='in'&&!isTransfer(t)).reduce((s,t)=>s+t.amount,0);
@@ -1597,8 +1643,8 @@ function bindPageEvents(){
   const toggleDashboardBalances=document.getElementById('toggleDashboardBalances');
   if(toggleDashboardBalances) toggleDashboardBalances.addEventListener('click',()=>{ state.settings.dashboardShowBalances=!dashboardShowBalances(); saveState(); render(); });
 
-  if(document.getElementById('dashboardTrend')) { const dash=activeDashboardCycle(); const acc=selectedDashboardAccountId(); const ser=getMonthlySeries(5,0,dash.year,dash.month).map(row=>{ const [y,m]=row.key.split('-').map(Number); const txs=txForDashboardAccount(txInPeriod(y,m-1),acc); const income=txs.filter(t=>t.type==='in'&&!isTransfer(t)).reduce((s,t)=>s+t.amount,0); const expense=txs.filter(isRealExpense).reduce((s,t)=>s+t.amount,0); return Object.assign({},row,{income,expense,net:income-expense}); }); drawMonthlyChart('dashboardTrend',ser); }
-  if(document.getElementById('analyticsTrend')) { const dash=activeDashboardCycle(); const acc=selectedDashboardAccountId(); const ser=getMonthlySeries(5,0,dash.year,dash.month).map(row=>{ const [y,m]=row.key.split('-').map(Number); const txs=txForDashboardAccount(txInPeriod(y,m-1),acc); const income=txs.filter(t=>t.type==='in'&&!isTransfer(t)).reduce((s,t)=>s+t.amount,0); const expense=txs.filter(isRealExpense).reduce((s,t)=>s+t.amount,0); return Object.assign({},row,{income,expense,net:income-expense}); }); drawMonthlyChart('analyticsTrend',ser); }
+  if(document.getElementById('dashboardTrend')) { const dash=activeDashboardCycle(); const acc=selectedDashboardAccountId(); const ser=getMonthlySeries(5,0,dash.year,dash.month,acc).map(row=>{ const [y,m]=row.key.split('-').map(Number); const txs=txForDashboardAccount(txInPeriod(y,m-1),acc); const income=txs.filter(t=>t.type==='in'&&!isTransfer(t)).reduce((s,t)=>s+t.amount,0); const expense=txs.filter(isRealExpense).reduce((s,t)=>s+t.amount,0); return Object.assign({},row,{income,expense,net:income-expense}); }); drawMonthlyChart('dashboardTrend',ser); }
+  if(document.getElementById('analyticsTrend')) { const dash=activeDashboardCycle(); const acc=selectedDashboardAccountId(); const ser=getMonthlySeries(5,0,dash.year,dash.month,acc).map(row=>{ const [y,m]=row.key.split('-').map(Number); const txs=txForDashboardAccount(txInPeriod(y,m-1),acc); const income=txs.filter(t=>t.type==='in'&&!isTransfer(t)).reduce((s,t)=>s+t.amount,0); const expense=txs.filter(isRealExpense).reduce((s,t)=>s+t.amount,0); return Object.assign({},row,{income,expense,net:income-expense}); }); drawMonthlyChart('analyticsTrend',ser); }
 
   // single delete
   document.querySelectorAll('[data-del]').forEach(b=>b.addEventListener('click',()=>{
