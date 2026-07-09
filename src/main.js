@@ -1,21 +1,5 @@
-/* ============ DEFAULT DATA ============ */
-const DEFAULT_CATEGORIES = [
-  {name:"Spesa",icon:"🛒",color:"#d6a23c"},
-  {name:"Trasporti",icon:"🚌",color:"#7ea487"},
-  {name:"Casa",icon:"🏠",color:"#e2725b"},
-  {name:"Bollette",icon:"💡",color:"#a78bd1"},
-  {name:"Svago",icon:"🎬",color:"#5fb3c9"},
-  {name:"Ristoranti",icon:"🍝",color:"#e0975c"},
-  {name:"Salute",icon:"⚕️",color:"#7ec99a"},
-  {name:"Abbonamenti",icon:"📺",color:"#d17ea8"},
-  {name:"Stipendio",icon:"💼",color:"#7ea487"},
-  {name:"Risparmi",icon:"🏦",color:"#d6a23c"},
-  {name:"Altro",icon:"✦",color:"#bcb5a3"}
-];
-const ACCT_COLORS = ["#d6a23c","#7ea487","#5fb3c9","#e2725b","#a78bd1"];
-const EMOJI_CHOICES = ["🛒","🚌","🏠","💡","🎬","🍝","⚕️","📺","💼","✦","🎓","🐾","👕","✈️","🎁","🔧","📱","☕","💪","🧾","🎮","🏋️","🧴","🐶","🌿","🎵","🍕","🚗","🏖️","📚"];
-const COLOR_CHOICES = ["#d6a23c","#7ea487","#e2725b","#a78bd1","#5fb3c9","#e0975c","#7ec99a","#d17ea8","#bcb5a3","#8aa6d6","#c97070","#70c9b0","#e8c847","#9e7ac4"];
-const MONTHS_IT = ["gennaio","febbraio","marzo","aprile","maggio","giugno","luglio","agosto","settembre","ottobre","novembre","dicembre"];
+import { DEFAULT_CATEGORIES, ACCT_COLORS, EMOJI_CHOICES, COLOR_CHOICES, MONTHS_IT } from './constants.js';
+import { uid, isoToday, addDays, fmtEUR, fmtDate, escapeHTML, lastDayOfMonth, clampDay, dayStart, dateKey, parseISODate, nowIso, fmtDateTime, isTransfer, monthKeyFromDate, addMonths } from './utils.js';
 
 /* ============ STATE ============ */
 let state = {
@@ -43,17 +27,9 @@ function catNames(){ return state.categories.map(c=>c.name); }
 function isSavingsCategory(name){ return String(name||'').toLowerCase()==='risparmi'; }
 
 /* ============ UTILS ============ */
-function uid(){ return 't'+Math.random().toString(36).slice(2,10); }
-function isoToday(){ return new Date().toISOString().slice(0,10); }
-function addDays(iso,n){ const d=new Date(iso); d.setDate(d.getDate()+n); return d.toISOString().slice(0,10); }
-function fmtEUR(n){ const s=n<0?"-":""; return s+"€"+Math.abs(n).toLocaleString('it-IT',{minimumFractionDigits:2,maximumFractionDigits:2}); }
-function fmtDate(iso){ return new Date(iso).toLocaleDateString('it-IT',{day:'2-digit',month:'short'}); }
-function escapeHTML(s){ const d=document.createElement('div'); d.textContent=s; return d.innerHTML; }
-function lastDayOfMonth(year,month){ return new Date(year,month+1,0).getDate(); }
-function clampDay(year,month,day){ return Math.min(Math.max(1,parseInt(day)||1),lastDayOfMonth(year,month)); }
-function dayStart(d){ return new Date(d.getFullYear(),d.getMonth(),d.getDate()); }
-function dateKey(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`; }
-function parseISODate(iso){ const [y,m,d]=String(iso).slice(0,10).split('-').map(Number); return new Date(y,(m||1)-1,d||1); }
+// uid, isoToday, addDays, fmtEUR, fmtDate, escapeHTML, lastDayOfMonth, clampDay,
+// dayStart, dateKey, parseISODate, nowIso, fmtDateTime, isTransfer,
+// monthKeyFromDate, addMonths → src/utils.js
 function isSalaryTx(t){
   const cat=String(t.category||'').toLowerCase();
   const payee=String(t.payee||'').toLowerCase();
@@ -186,7 +162,7 @@ function deviceId(){
   if(!id){ id='dev-'+Math.random().toString(36).slice(2)+'-'+Date.now().toString(36); localStorage.setItem(DEVICE_ID_KEY,id); }
   return id;
 }
-function nowIso(){ return new Date().toISOString(); }
+// nowIso → src/utils.js
 function ensureMeta(){
   if(!state._meta) state._meta={};
   if(!state._meta.createdAt) state._meta.createdAt=nowIso();
@@ -196,7 +172,7 @@ function ensureMeta(){
 }
 function touchState(){ const m=ensureMeta(); m.updatedAt=nowIso(); m.deviceId=deviceId(); m.appVersion=APP_VERSION; }
 function localUpdatedAt(){ return (state._meta && state._meta.updatedAt) || ''; }
-function fmtDateTime(iso){ return iso ? new Date(iso).toLocaleString('it-IT',{day:'2-digit',month:'2-digit',hour:'2-digit',minute:'2-digit'}) : 'mai'; }
+// fmtDateTime → src/utils.js
 function getCloudConfig(){
   // v20: Supabase è preconfigurato nella build, così ogni dispositivo vede direttamente login/app.
   return {url:PRECONFIGURED_SUPABASE_URL, anonKey:PRECONFIGURED_SUPABASE_ANON_KEY};
@@ -395,7 +371,7 @@ function importBackupFile(file){
 function txInMonth(year,month){ return txInPeriod(year,month); }
 function txInPeriod(year,month){ return txInBounds(periodBounds(year,month)); }
 function spentByCategory(txs){ const m={}; txs.filter(t=>t.type==='out'&&t.movementType!=='transfer').forEach(t=>{ m[t.category]=(m[t.category]||0)+t.amount; }); return m; }
-function isTransfer(t){ return t.movementType==='transfer'; }
+// isTransfer → src/utils.js
 function isRealExpense(t){ return t.type==='out' && !isTransfer(t); }
 function accountBalance(accountId){
   const acct=state.accounts.find(a=>a.id===accountId);
@@ -439,9 +415,8 @@ function accountBalancesCardHTML(){
   return `<div class="card" style="margin-bottom:16px;"><h3>Saldi per conto</h3>${state.accounts.map(a=>`
     <div class="rec-item"><div><div class="nm">🏦 ${escapeHTML(a.name)}</div><div class="freq">Saldo iniziale: <span class="num">${fmtEUR(parseFloat(a.initialBalance)||0)}</span></div></div><div class="num" style="color:${accountBalance(a.id)>=0?'var(--sage)':'var(--coral)'}">${fmtEUR(accountBalance(a.id))}</div></div>`).join('')}</div>`;
 }
-function monthKeyFromDate(d){ return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}`; }
+// monthKeyFromDate, addMonths → src/utils.js
 function monthLabel(key){ const [y,m]=key.split('-').map(Number); return periodLabel(y,m-1); }
-function addMonths(date,n){ const d=new Date(date); d.setMonth(d.getMonth()+n); return d; }
 function firstMovementCycleKey(accountId='all'){
   const list=state.transactions
     .filter(t=>txMatchesAccount(t,accountId))
