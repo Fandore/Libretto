@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="it">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#162e26">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Libretto">
+<link rel="manifest" href="/Libretto/assets/manifest-sDMm66Qr.webmanifest">
+<title>Libretto v21 — le tue finanze</title>
+  <script type="module" crossorigin src="/Libretto/assets/index-DBe5MbJC.js"></script>
+  <link rel="stylesheet" crossorigin href="/Libretto/assets/index-CB0gKl0R.css">
+</head>
+<body>
+
+<button class="menu-toggle" id="menuToggle">☰</button>
+
+<div class="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="brand">
+      <div class="mark">L</div>
+      <div>
+        <div class="name">Libretto</div>
+        <div class="sub">finanze personali</div>
+      </div>
+    </div>
+    <div id="userPillRoot" class="sidebar-user-root"></div>
+    <nav id="nav">
+      <button class="navbtn" data-page="dashboard">📒 Dashboard</button>
+      <button class="navbtn" data-page="transactions">📑 Movimenti</button>
+      <button class="navbtn" data-page="budget">🎯 Budget</button>
+      <button class="navbtn" data-page="analytics">📈 Analisi</button>
+      <button class="navbtn" data-page="goals">🏺 Obiettivi</button>
+      <button class="navbtn" data-page="accounts">🏦 Conti</button>
+      <button class="navbtn" data-page="categories">🏷 Categorie</button>
+      <button class="navbtn" data-page="cloud">👥 Utenti / Cloud</button>
+      <button class="navbtn" data-page="help">❓ Help</button>
+    </nav>
+    <div class="sidebar-foot">
+      <div>Dati locali nel browser.<br>Cloud opzionale per più utenti.</div>
+      <div style="display:flex;flex-direction:column;gap:7px;margin-top:12px;">
+        <button class="btn small ghost" id="exportBackupBtn" type="button">⬇️ Esporta backup</button>
+        <button class="btn small ghost" id="importBackupBtn" type="button">⬆️ Importa backup</button>
+        <input type="file" id="importBackupFile" accept="application/json,.json" style="display:none">
+      </div>
+    </div>
+  </aside>
+  <main class="main" id="main"></main>
+</div>
+
+<button class="fab" id="fabAdd" title="Aggiungi movimento">+</button>
+<div id="modalRoot"></div>
+<div id="toastRoot"></div>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+</body>
+</html>
