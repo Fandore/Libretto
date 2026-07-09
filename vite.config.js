@@ -1,8 +1,9 @@
 import { defineConfig } from 'vite';
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   root: '.',
   publicDir: 'public',
+  base: command === 'build' ? '/Libretto/' : '/',
   build: {
     outDir: 'dist',
     emptyOutDir: true,
@@ -10,4 +11,4 @@ export default defineConfig({
   server: {
     open: true,
   },
-});
+}));
