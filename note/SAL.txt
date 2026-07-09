@@ -1,27 +1,43 @@
-09/07/2026 — Sessione 2: Migrazione a Vite
+09/07/2026 — Sessione 2: Migrazione a Vite + Deploy GitHub Pages
 SAL:
 - Introdotto Vite come build tool e dev server (npm + vite)
-- Creato package.json con script dev / build / preview
+- Creato package.json con script dev / build / preview / deploy
 - Creato vite.config.js e .gitignore
-- Creati branch feature/vite-setup (da develop) per lavorare in isolamento
+- Lavorato su branch feature/ dedicati, poi merge su develop → main
 - Spostati file statici (manifest, icona, sw.js) nella cartella public/
 - Estratto l'intero blocco <script> inline da index.html in src/main.js (1776 righe)
 - index.html è ora pulito: solo struttura HTML (57 righe) + due tag <script>
-- App testata su http://localhost:5173 — tutto funzionante
-- I test vengono eseguiti su LocalHost con "npm run dev"
+- Configurato vite.config.js con base path dinamico (/Libretto/ in build, / in dev)
+- App live su: https://fandore.github.io/Libretto/
+- I test locali si eseguono con "npm run dev" su http://localhost:5173
+- Il deploy in produzione si esegue con "npm run deploy" da locale
+
+PROBLEMI RISCONTRATI E SOLUZIONI:
+  PROBLEMA: Dopo il primo deploy, GitHub Pages serviva il vecchio index.html
+  (con src="/src/main.js") invece del file buildato da Vite (con gli asset hashati).
+  CAUSA: Il workflow GitHub Actions (.github/workflows/deploy.yml) sembrava girare
+  correttamente ma il deployment effettivo continuava ad essere servito dal vecchio
+  sistema Jekyll, che aveva deployato il sorgente grezzo invece della cartella dist/.
+  SOLUZIONE: Abbandonato l'approccio GitHub Actions in favore del pacchetto npm
+  "gh-pages". Con "npm run deploy" Vite builda il progetto e gh-pages pubblica
+  automaticamente la cartella dist/ sul branch gh-pages. Su GitHub Pages è stata
+  impostata la sorgente: "Deploy from branch → gh-pages → /(root)".
 
 --- STORICO ---
 08/07/2026 — Sessione 1: Pulizia CSS
 - Spostato lo <style> inline in css/app.css, eliminando ~100 righe da index.html
 
 --- NEXT STEPS ---
-1. Fare merge di feature/vite-setup su develop, poi su main
-2. Suddividere src/main.js in moduli separati:
+1. ✅ Migrazione a Vite completata
+2. ✅ Deploy su GitHub Pages via gh-pages branch
+3. Suddividere src/main.js in moduli separati:
    - src/constants.js  → DEFAULT_CATEGORIES, colori, emoji
    - src/state.js      → oggetto state e funzioni derivate
    - src/storage.js    → localStorage + Supabase (cloud sync)
    - src/utils.js      → funzioni di utilità (date, formattazione, ecc.)
    - src/pages/        → una funzione renderXxx per ogni sezione
    - src/components/   → modal, toast, sidebar
-3. Aggiornare src/main.js come entry point che importa i moduli
-4. Valutare deploy automatico su GitHub Pages da branch main
+4. Aggiornare src/main.js come entry point che importa i moduli
+5. Implementare le nuove funzionalità richieste (vedi note/ChatGPT_requests.txt):
+   - Frequenza "bimestrale" e "annuale" per le spese ricorrenti
+   - Entrate diverse da Stipendio non contate come ricorrenti nei cashflow

@@ -1,0 +1,3 @@
+Richieste aggiornamenti app:
+1 - Inserire frequenza "bimestrale" e "annuale" per le spese ricorrenti
+2 - Far capire che entrate diverse da Stipendio non sono da considerare ricorrenti per il futuro e per i cashflows
