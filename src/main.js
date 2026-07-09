@@ -657,6 +657,17 @@ function alertsHTML(year,month){
 }
 
 /* ============ ROUTER ============ */
+const ADMIN_EMAIL='manciaracina92@gmail.com';
+const ADMIN_ONLY_PAGES=['cloud','help'];
+function isAdmin(){ return !cloud.user || cloud.user.email===ADMIN_EMAIL; }
+function updateNavVisibility(){
+  const admin=isAdmin();
+  ADMIN_ONLY_PAGES.forEach(page=>{
+    const btn=document.querySelector(`.navbtn[data-page="${page}"]`);
+    if(btn) btn.style.display=admin?'':'none';
+  });
+}
+
 let currentPage='dashboard';
 let viewMonth=new Date().getMonth();
 let viewYear=new Date().getFullYear();
@@ -664,7 +675,10 @@ let selectedTxIds=new Set();
 let txFilterCat='';
 let txFilterMonth='';
 
-function setPage(p){ currentPage=p; selectedTxIds=new Set(); document.querySelectorAll('.navbtn').forEach(b=>b.classList.toggle('active',b.dataset.page===p)); render(); document.getElementById('sidebar').classList.remove('open'); }
+function setPage(p){
+  if(!isAdmin() && ADMIN_ONLY_PAGES.includes(p)) p='dashboard';
+  currentPage=p; selectedTxIds=new Set(); document.querySelectorAll('.navbtn').forEach(b=>b.classList.toggle('active',b.dataset.page===p)); render(); document.getElementById('sidebar').classList.remove('open');
+}
 document.querySelectorAll('.navbtn').forEach(b=>b.addEventListener('click',()=>setPage(b.dataset.page)));
 document.getElementById('menuToggle').addEventListener('click',()=>document.getElementById('sidebar').classList.toggle('open'));
 
@@ -1171,9 +1185,11 @@ function renderHelp(){
 function render(){
   const main=document.getElementById('main');
   updateUserPill();
+  updateNavVisibility();
   const fab=document.getElementById('fabAdd');
   if(fab) fab.style.display=mustLogin()?'none':'flex';
   try{
+    if(!isAdmin() && ADMIN_ONLY_PAGES.includes(currentPage)) currentPage='dashboard';
     if(mustLogin() && currentPage!=='cloud' && currentPage!=='help'){ main.innerHTML=renderAuthGate(); bindAuthGateEvents(); return; }
     if(currentPage==='dashboard') main.innerHTML=renderDashboard();
     else if(currentPage==='transactions') main.innerHTML=renderTransactions();
