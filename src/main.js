@@ -16,7 +16,8 @@ let state = {
   ],
   transactions:[],
   alertsDismissed:{},
-  settings:{salaryDay:27}
+  settings:{salaryDay:27},
+  stoppedRecurrings:[]
 };
 
 /* ============ CATEGORY HELPERS ============ */
@@ -25,6 +26,26 @@ function catIcon(name){ return catMeta(name).icon; }
 function catColor(name){ return catMeta(name).color; }
 function catNames(){ return state.categories.map(c=>c.name); }
 function isSavingsCategory(name){ return String(name||'').toLowerCase()==='risparmi'; }
+function recKey(payee,category){ return (payee||'').toLowerCase()+'|'+(category||''); }
+function isRecurringStopped(payee,category){ return (state.stoppedRecurrings||[]).includes(recKey(payee,category)); }
+function toggleRecurringStopped(payee,category){
+  if(!state.stoppedRecurrings) state.stoppedRecurrings=[];
+  const k=recKey(payee,category);
+  const idx=state.stoppedRecurrings.indexOf(k);
+  if(idx>=0) state.stoppedRecurrings.splice(idx,1);
+  else state.stoppedRecurrings.push(k);
+  touchState(); saveState(); render();
+  toast(idx>=0?'Ricorrente riattivata ▶':'Ricorrente fermata — non apparirà nelle proiezioni ⏹');
+}
+function stoppedRecurringsDetails(){
+  return (state.stoppedRecurrings||[]).map(k=>{
+    const sep=k.indexOf('|');
+    const payeeLower=k.slice(0,sep), category=k.slice(sep+1);
+    const tx=state.transactions.filter(t=>(t.payee||'').toLowerCase()===payeeLower&&(t.category||'')===category).sort((a,b)=>b.date.localeCompare(a.date))[0];
+    if(!tx) return null;
+    return {payee:tx.payee,category:tx.category,amount:tx.amount,freq:tx.recurringFreq||'Mensile'};
+  }).filter(Boolean);
+}
 
 /* ============ UTILS ============ */
 // uid, isoToday, addDays, fmtEUR, fmtDate, escapeHTML, lastDayOfMonth, clampDay,
@@ -149,7 +170,7 @@ function seedTransactions(){
 }
 
 /* ============ PERSISTENCE — STANDALONE BROWSER ============ */
-const APP_VERSION = '22.1-sidebar-user-recurring-summary';
+const APP_VERSION = '22.2-bimestrale-salary-cashflow';
 const PRECONFIGURED_SUPABASE_URL = 'https://marvmbewsgxrabirugkk.supabase.co';
 const PRECONFIGURED_SUPABASE_ANON_KEY = 'sb_publishable_Jsd4sX6_6pNCUqHIcun4lA_9F81WlPg';
 const STORAGE_KEY = 'libretto-v2-standalone-state';
@@ -456,19 +477,37 @@ function getMonthlySeries(monthsBack=5, monthsForward=0, baseYear=viewYear, base
   }).filter(row=>row.income!==0 || row.expense!==0 || row.transfers!==0 || row.key===endKey);
 }
 function fixedExpenses(){
-  const explicit=state.transactions.filter(t=>isRealExpense(t)&&t.recurring);
-  const detected=detectRecurring().filter(r=>r.type==='out');
+  const explicit=state.transactions.filter(t=>isRealExpense(t)&&t.recurring&&!isRecurringStopped(t.payee,t.category));
+  const detected=detectRecurring().filter(r=>r.type==='out'&&!isRecurringStopped(r.payee,r.category));
   const map={};
-  explicit.forEach(t=>{ const k=(t.payee||'').toLowerCase()+'|'+t.account+'|'+t.category; map[k]={payee:t.payee,category:t.category,amount:t.amount,freq:t.recurringFreq||'Mensile',source:'manuale'}; });
+  explicit.forEach(t=>{ const k=(t.payee||'').toLowerCase()+'|'+t.account+'|'+t.category; map[k]={payee:t.payee,category:t.category,amount:t.amount,freq:t.recurringFreq||'Mensile',source:'manuale',nextDate:t.recurringNextDate||null}; });
   detected.forEach(r=>{ const k=(r.payee||'').toLowerCase()+'|'+r.category; if(!map[k]) map[k]={payee:r.payee,category:r.category,amount:r.amount,freq:r.freq,source:'rilevata'}; });
   return Object.values(map).sort((a,b)=>b.amount-a.amount);
 }
-function monthlyFixedTotal(){ return fixedExpenses().filter(f=>f.freq!=='Settimanale').reduce((s,f)=>s+f.amount,0)+fixedExpenses().filter(f=>f.freq==='Settimanale').reduce((s,f)=>s+f.amount*4.33,0); }
-
 function recurringMonthlyEquivalent(amount,freq){
   if(freq==='Settimanale') return amount*4.33;
+  if(freq==='Bimestrale') return amount/2;
   if(freq==='Annuale') return amount/12;
-  return amount;
+  return amount; // Mensile
+}
+function monthlyFixedTotal(){ return fixedExpenses().reduce((s,f)=>s+recurringMonthlyEquivalent(f.amount,f.freq),0); }
+function fixedExpensesForMonth(projDate){
+  // Calcola le spese fisse effettivamente dovute in un mese specifico della proiezione.
+  // Mensile/Settimanale: sempre presenti. Bimestrale/Annuale: solo nei mesi in cui cadono.
+  const py=projDate.getFullYear(), pm=projDate.getMonth();
+  return fixedExpenses().reduce((total,f)=>{
+    if(f.freq==='Mensile') return total+f.amount;
+    if(f.freq==='Settimanale') return total+f.amount*4.33;
+    // Bimestrale / Annuale: senza nextDate usa equivalente mensile come fallback
+    if(!f.nextDate) return total+recurringMonthlyEquivalent(f.amount,f.freq);
+    const step=f.freq==='Bimestrale'?2:12;
+    const nd=parseISODate(f.nextDate);
+    let check=new Date(nd.getFullYear(),nd.getMonth(),1);
+    // porta check al primo ciclo che non supera il mese target
+    while(check>new Date(py,pm,1)) check=addMonths(check,-step);
+    while(check<new Date(py,pm,1)) check=addMonths(check,step);
+    return (check.getFullYear()===py&&check.getMonth()===pm) ? total+f.amount : total;
+  },0);
 }
 function recurringSummaryByCategory(selectedAccount='all'){
   const items=[];
@@ -492,22 +531,36 @@ function recurringSummaryByCategory(selectedAccount='all'){
 }
 function recurringSummaryHTML(selectedAccount='all'){
   const groups=recurringSummaryByCategory(selectedAccount);
-  if(!groups.length) return `<div class="empty">Nessuna spesa ricorrente ancora. Puoi marcarle quando inserisci o modifichi un movimento.</div>`;
+  const stopped=stoppedRecurringsDetails();
+  const stoppedSection=stopped.length?`<div style="margin-top:14px"><div class="sync-note" style="margin-bottom:6px">Ricorrenti fermate — non incluse nelle proiezioni:</div>${stopped.map(s=>`<div class="budget-row-foot" style="display:flex;justify-content:space-between;align-items:center;padding:4px 0">${catIcon(s.category)} ${escapeHTML(s.payee||'—')} · ${s.freq}<button class="btn small ghost" data-stop-rec="${escapeHTML(s.payee)}" data-stop-rec-cat="${escapeHTML(s.category)}" style="padding:2px 8px;font-size:11px">▶ Riattiva</button></div>`).join('')}</div>`:'';
+  if(!groups.length) return `<div class="empty">Nessuna spesa ricorrente ancora. Puoi marcarle quando inserisci o modifichi un movimento.</div>${stoppedSection}`;
   const total=groups.reduce((s,g)=>s+g.total,0);
   const max=Math.max(1,...groups.map(g=>g.total));
   return `<div class="mini-grid" style="grid-template-columns:1fr;margin-bottom:14px;"><div class="mini-kpi"><div class="mlabel">Totale ricorrente stimato</div><div class="mvalue num neg">${fmtEUR(total)}</div><div class="sync-note">equivalente mensile per ${escapeHTML(accountOptionLabel(selectedAccount))}</div></div></div>`+
     groups.map(g=>`<div class="catbar-row">
       <div class="catbar-top"><div class="nm">${catIcon(g.category)} ${g.category} <span class="pill rec">${g.count} voc${g.count===1?'e':'i'}</span></div><div class="amt num">${fmtEUR(g.total)}</div></div>
       <div class="catbar-track"><div class="catbar-fill" style="width:${(g.total/max*100).toFixed(0)}%;background:${catColor(g.category)}"></div></div>
-      <div class="budget-row-foot">${g.items.slice(0,3).map(i=>`${escapeHTML(i.payee||'—')} · ${i.freq} · ${fmtEUR(i.monthly)}/mese`).join(' · ')}${g.items.length>3?' · …':''}</div>
-    </div>`).join('');
+      <div class="budget-row-foot" style="display:flex;flex-wrap:wrap;gap:4px;align-items:center">${g.items.map(i=>`<span style="display:flex;align-items:center;gap:4px">${escapeHTML(i.payee||'—')} · ${i.freq} · ${fmtEUR(i.monthly)}/mese <button class="btn small ghost" data-stop-rec="${escapeHTML(i.payee)}" data-stop-rec-cat="${escapeHTML(i.category)}" style="padding:2px 6px;font-size:11px" title="Ferma questa ricorrente">⏹</button></span>`).join('<span style="opacity:.4">·</span>')}${g.items.length>3?' …':''}</div>
+    </div>`).join('')+stoppedSection;
 }
 function projectionRows(n=6){
-  const incomeAvg=getMonthlySeries(5,0,viewYear,viewMonth,'all').filter(x=>x.income>0).reduce((a,x,i,arr)=>a+x.income/arr.length,0)||0;
-  const fixed=monthlyFixedTotal();
+  // Solo lo stipendio è ricorrente: le altre entrate (bonus, rimborsi, ecc.) non si proiettano
+  const series=getMonthlySeries(5,0,viewYear,viewMonth,'all');
+  const salaryPerCycle=series.map(s=>{
+    const [y,m]=s.key.split('-').map(Number);
+    return txInPeriod(y,m-1).filter(isSalaryTx).reduce((sum,t)=>sum+t.amount,0);
+  }).filter(v=>v>0);
+  const incomeAvg=salaryPerCycle.length ? salaryPerCycle.reduce((a,b)=>a+b,0)/salaryPerCycle.length : 0;
   let start=totalAccountBalance();
   const rows=[]; const base=new Date(viewYear,viewMonth,1);
-  for(let i=1;i<=n;i++){ const key=monthKeyFromDate(addMonths(base,i)); const net=incomeAvg-fixed; start+=net; rows.push({key,label:monthLabel(key),income:incomeAvg,fixed,net,balance:start}); }
+  for(let i=1;i<=n;i++){
+    const projDate=addMonths(base,i);
+    const key=monthKeyFromDate(projDate);
+    const fixed=fixedExpensesForMonth(projDate);
+    const net=incomeAvg-fixed;
+    start+=net;
+    rows.push({key,label:monthLabel(key),income:incomeAvg,fixed,net,balance:start});
+  }
   return rows;
 }
 function drawMonthlyChart(canvasId,series){
@@ -778,7 +831,7 @@ function renderAnalytics(){
     <table class="analysis-table"><thead><tr><th>Ciclo</th><th>Entrate stimate</th><th>Spese fisse</th><th>Netto stimato</th><th>Saldo totale previsto</th></tr></thead><tbody>
       ${proj.map(r=>`<tr><td>${r.label}</td><td class="num" style="color:var(--sage)">${fmtEUR(r.income)}</td><td class="num" style="color:var(--coral)">${fmtEUR(r.fixed)}</td><td class="num ${r.net>=0?'pos':'neg'}">${fmtEUR(r.net)}</td><td class="num">${fmtEUR(r.balance)}</td></tr>`).join('')}
     </tbody></table>
-    <div class="empty" style="text-align:left;padding-bottom:0">La proiezione usa la media delle entrate degli ultimi cicli e le spese ricorrenti/manuali. I trasferimenti tra conti non vengono trattati come spese reali.</div>
+    <div class="empty" style="text-align:left;padding-bottom:0">La proiezione usa la media dello stipendio degli ultimi cicli come entrata ricorrente (bonus e altre entrate una tantum non vengono proiettate). Le spese fisse/ricorrenti sono convertite in equivalente mensile.</div>
   </div>`;
 }
 
@@ -1275,6 +1328,9 @@ function bindPageEvents(){
 
   // alert dismiss
   document.querySelectorAll('[data-dismiss]').forEach(b=>b.addEventListener('click',()=>dismissAlert(b.dataset.dismiss)));
+
+  // stop / resume ricorrenti
+  document.querySelectorAll('[data-stop-rec]').forEach(b=>b.addEventListener('click',()=>toggleRecurringStopped(b.dataset.stopRec,b.dataset.stopRecCat)));
   const dashboardAccountSelect=document.getElementById('dashboardAccountSelect');
   if(dashboardAccountSelect) dashboardAccountSelect.addEventListener('change',()=>{ state.settings.dashboardAccountId=dashboardAccountSelect.value; saveState(); render(); });
   const toggleDashboardBalances=document.getElementById('toggleDashboardBalances');
@@ -1506,7 +1562,7 @@ function openTransactionModal(txId=null){
       <div class="recurrence-box">
         <label class="checkline"><input type="checkbox" id="fRecurring" ${isRecurring?'checked':''}> Questa uscita è ricorrente / fissa</label>
         <div id="recFields" style="display:${isRecurring?'block':'none'};margin-top:12px;">
-          <div class="frow"><div class="field"><label>Frequenza</label><select id="fRecFreq"><option ${existing&&existing.recurringFreq==='Mensile'?'selected':''}>Mensile</option><option ${existing&&existing.recurringFreq==='Settimanale'?'selected':''}>Settimanale</option><option ${existing&&existing.recurringFreq==='Annuale'?'selected':''}>Annuale</option></select></div><div class="field"><label>Prossima data</label><input type="date" id="fRecNext" value="${existing&&existing.recurringNextDate?existing.recurringNextDate:addDays(isoToday(),30)}"></div></div>
+          <div class="frow"><div class="field"><label>Frequenza</label><select id="fRecFreq"><option ${existing&&existing.recurringFreq==='Mensile'?'selected':''}>Mensile</option><option ${existing&&existing.recurringFreq==='Settimanale'?'selected':''}>Settimanale</option><option ${existing&&existing.recurringFreq==='Bimestrale'?'selected':''}>Bimestrale</option><option ${existing&&existing.recurringFreq==='Annuale'?'selected':''}>Annuale</option></select></div><div class="field"><label>Prossima data</label><input type="date" id="fRecNext" value="${existing&&existing.recurringNextDate?existing.recurringNextDate:addDays(isoToday(),30)}"></div></div>
         </div>
       </div>
       <div class="modal-actions">
@@ -1726,6 +1782,7 @@ function migrateState(){
   if(!state.settings) state.settings={};
   if(state.settings.dashboardShowBalances===undefined) state.settings.dashboardShowBalances=true;
   if(!state.settings.dashboardAccountId && state.accounts[0]) state.settings.dashboardAccountId=state.accounts[0].id;
+  if(!state.stoppedRecurrings) state.stoppedRecurrings=[];
   ensureMeta();
   // Il ciclo budget ora è derivato dai movimenti Stipendio, non da un giorno fisso.
 }
