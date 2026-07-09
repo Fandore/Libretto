@@ -1444,7 +1444,7 @@ async function cloudAuth(mode){
   if(!email||!password){ toast('Inserisci email e password'); return; }
   try{
     const res = mode==='signup'
-      ? await cloud.client.auth.signUp({email,password})
+      ? await cloud.client.auth.signUp({email,password,options:{emailRedirectTo:'https://fandore.github.io/Libretto/'}})
       : await cloud.client.auth.signInWithPassword({email,password});
     if(res.error) throw res.error;
     if(res.data && res.data.session && res.data.session.user) cloud.user=res.data.session.user;
