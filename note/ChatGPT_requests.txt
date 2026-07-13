@@ -18,9 +18,19 @@ Richieste aggiornamenti app:
     calcola i totali e invia la mail formattata in HTML all'utente registrato.
     Prerequisiti: account Resend, API key, verifica dominio mittente.
 
-7 - Importi ricorrenti variabili: per spese come bollette (luce, gas) che variano ogni mese,
+7 ✅ IMPLEMENTATO 13/07/2026 (v22.5) - Importi ricorrenti variabili: per spese come bollette (luce, gas) che variano ogni mese,
     usare la media degli ultimi 3 importi registrati invece di un valore fisso nelle proiezioni cashflow.
 
 8 - Modularizzazione Fase 2: estrarre src/state.js (state object + category helpers)
     e src/storage.js (localStorage + Supabase sync) da main.js.
     Nota: richiede attenzione alle dipendenze circolari (storage chiama render, render usa storage).
+
+9 - Export movimenti in Excel per intervallo di date:
+    Nella sezione Movimenti, aggiungere un tasto "Scarica Excel" che chiede data inizio e
+    data fine, poi genera un file .xlsx con tutti i movimenti del periodo selezionato.
+    Il formato output deve essere identico al template CSV di import (stesse colonne:
+    date, type, amount, payee, account, category, movementType, transferTo, goal,
+    recurring, recurringFreq, recurringNextDate).
+    Approccio suggerito: generazione lato client senza dipendenze esterne — usare la
+    libreria SheetJS (xlsx, CDN o npm) oppure generare un CSV rinominato .xlsx.
+    Nessuna modifica al backend necessaria.

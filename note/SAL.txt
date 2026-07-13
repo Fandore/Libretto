@@ -1,3 +1,13 @@
+13/07/2026 — Sessione 7: Importi ricorrenti variabili (v22.5) + Deploy mail riepilogo (v22.4) — LIVE ✅
+SAL:
+- req. 7: Aggiunta funzione avgLastNAmounts(payee, category, n=3) in src/main.js
+  - Calcola la media degli ultimi N importi per payee+categoria (default 3)
+  - fixedExpenses() ora usa avg??t.amount per le ricorrenti manuali
+  - recurringSummaryByCategory() aggiornata di conseguenza
+  - Impatto: proiezioni cashflow e riepilogo ricorrenti usano la media reale invece dell'ultimo importo fisso
+- APP_VERSION aggiornata a 22.5-variable-recurring
+
+--- STORICO ---
 13/07/2026 — Sessione 7: Deploy mail riepilogo (v22.4) — LIVE ✅
 SAL:
 - Deploy infrastruttura completo:

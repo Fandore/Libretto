@@ -170,7 +170,7 @@ function seedTransactions(){
 }
 
 /* ============ PERSISTENCE — STANDALONE BROWSER ============ */
-const APP_VERSION = '22.2-bimestrale-salary-cashflow';
+const APP_VERSION = '22.5-variable-recurring';
 const PRECONFIGURED_SUPABASE_URL = 'https://marvmbewsgxrabirugkk.supabase.co';
 const PRECONFIGURED_SUPABASE_ANON_KEY = 'sb_publishable_Jsd4sX6_6pNCUqHIcun4lA_9F81WlPg';
 const STORAGE_KEY = 'libretto-v2-standalone-state';
@@ -476,11 +476,21 @@ function getMonthlySeries(monthsBack=5, monthsForward=0, baseYear=viewYear, base
     return {key:k,label:monthLabel(k),shortLabel:compactCycleLabel(k),income,expense,net:income-expense,transfers};
   }).filter(row=>row.income!==0 || row.expense!==0 || row.transfers!==0 || row.key===endKey);
 }
+function avgLastNAmounts(payee,category,n=3){
+  // Restituisce la media degli ultimi N importi registrati per payee+categoria.
+  // Usata nelle proiezioni per stimare spese variabili (es. bollette).
+  const txs=state.transactions
+    .filter(t=>isRealExpense(t)&&(t.payee||'').toLowerCase()===(payee||'').toLowerCase()&&t.category===category)
+    .sort((a,b)=>b.date.localeCompare(a.date))
+    .slice(0,n);
+  if(!txs.length) return null;
+  return txs.reduce((s,t)=>s+t.amount,0)/txs.length;
+}
 function fixedExpenses(){
   const explicit=state.transactions.filter(t=>isRealExpense(t)&&t.recurring&&!isRecurringStopped(t.payee,t.category));
   const detected=detectRecurring().filter(r=>r.type==='out'&&!isRecurringStopped(r.payee,r.category));
   const map={};
-  explicit.forEach(t=>{ const k=(t.payee||'').toLowerCase()+'|'+t.account+'|'+t.category; map[k]={payee:t.payee,category:t.category,amount:t.amount,freq:t.recurringFreq||'Mensile',source:'manuale',nextDate:t.recurringNextDate||null}; });
+  explicit.forEach(t=>{ const k=(t.payee||'').toLowerCase()+'|'+t.account+'|'+t.category; const avg=avgLastNAmounts(t.payee,t.category,3); map[k]={payee:t.payee,category:t.category,amount:avg??t.amount,freq:t.recurringFreq||'Mensile',source:'manuale',nextDate:t.recurringNextDate||null}; });
   detected.forEach(r=>{ const k=(r.payee||'').toLowerCase()+'|'+r.category; if(!map[k]) map[k]={payee:r.payee,category:r.category,amount:r.amount,freq:r.freq,source:'rilevata'}; });
   return Object.values(map).sort((a,b)=>b.amount-a.amount);
 }
@@ -512,7 +522,7 @@ function fixedExpensesForMonth(projDate){
 function recurringSummaryByCategory(selectedAccount='all'){
   const items=[];
   state.transactions.filter(t=>isRealExpense(t)&&t.recurring&&txMatchesAccount(t,selectedAccount)).forEach(t=>{
-    items.push({payee:t.payee,category:t.category,amount:t.amount,freq:t.recurringFreq||'Mensile',source:'manuale'});
+    const avg=avgLastNAmounts(t.payee,t.category,3); items.push({payee:t.payee,category:t.category,amount:avg??t.amount,freq:t.recurringFreq||'Mensile',source:'manuale'});
   });
   detectRecurring().filter(r=>r.type==='out').forEach(r=>{
     const matches=state.transactions.some(t=>String(t.payee||'').toLowerCase()===String(r.payee||'').toLowerCase() && txMatchesAccount(t,selectedAccount));
@@ -1181,6 +1191,64 @@ function renderHelp(){
   </div>`;
 }
 
+/* ============ FEEDBACK ============ */
+function renderFeedback(){
+  return `
+  <div class="topbar"><h1>💬 Feedback</h1></div>
+  <div class="grid row2" style="align-items:start">
+    <div class="card">
+      <h3>Segnala un problema o suggerisci una modifica</h3>
+      <div class="field">
+        <label>Tipo di segnalazione</label>
+        <select id="fbType">
+          <option value="bug">🐛 Segnalazione bug</option>
+          <option value="feature">✨ Nuova funzionalità</option>
+          <option value="miglioramento">🔧 Miglioramento esistente</option>
+          <option value="altro">💡 Altro</option>
+        </select>
+      </div>
+      <div class="field">
+        <label>Titolo breve</label>
+        <input id="fbTitle" type="text" placeholder="Es. Il grafico mensile non mostra i trasferimenti" maxlength="100">
+      </div>
+      <div class="field">
+        <label>Descrizione dettagliata</label>
+        <textarea id="fbBody" rows="5" placeholder="Descrivi il problema o la funzionalità che vorresti. Più dettagli fornisci, meglio posso aiutarti." style="resize:vertical"></textarea>
+      </div>
+      <div class="field">
+        <label>Comportamento atteso <span style="color:var(--cream-dim);font-weight:400;text-transform:none;letter-spacing:0">(opzionale)</span></label>
+        <textarea id="fbExpected" rows="3" placeholder="Come ti aspetti che funzioni?" style="resize:vertical"></textarea>
+      </div>
+      <div style="display:flex;justify-content:flex-end;margin-top:4px">
+        <button class="btn" id="fbSendBtn" type="button">📧 Invia feedback</button>
+      </div>
+    </div>
+    <div class="card">
+      <h3>Come funziona</h3>
+      <div class="empty" style="text-align:left;padding-top:0">
+        Compilando il form e cliccando <b>Invia feedback</b> si aprirà il tuo client di posta con il messaggio già pronto.
+      </div>
+      <div style="margin-top:14px;display:flex;flex-direction:column;gap:12px">
+        <div class="recurrence-box" style="margin:0">
+          <div style="font-size:13px;font-weight:600;margin-bottom:4px">🐛 Bug</div>
+          <div class="empty" style="padding:0;text-align:left;font-size:12.5px">Qualcosa non funziona come dovrebbe. Descrivi cosa hai fatto e cosa hai visto.</div>
+        </div>
+        <div class="recurrence-box" style="margin:0">
+          <div style="font-size:13px;font-weight:600;margin-bottom:4px">✨ Nuova funzionalità</div>
+          <div class="empty" style="padding:0;text-align:left;font-size:12.5px">Un'aggiunta che non c'è ancora. Più dettagli fornisci, più è facile valutarla.</div>
+        </div>
+        <div class="recurrence-box" style="margin:0">
+          <div style="font-size:13px;font-weight:600;margin-bottom:4px">🔧 Miglioramento</div>
+          <div class="empty" style="padding:0;text-align:left;font-size:12.5px">Una cosa che già esiste ma che potrebbe funzionare meglio.</div>
+        </div>
+      </div>
+      <div class="empty" style="font-size:11.5px;margin-top:16px;padding-bottom:0">
+        Il messaggio include un prompt tecnico strutturato pronto per Claude Code.
+      </div>
+    </div>
+  </div>`;
+}
+
 /* ============ MASTER RENDER ============ */
 function render(){
   const main=document.getElementById('main');
@@ -1200,6 +1268,7 @@ function render(){
     else if(currentPage==='categories') main.innerHTML=renderCategories();
     else if(currentPage==='cloud') main.innerHTML=renderCloud();
     else if(currentPage==='help') main.innerHTML=renderHelp();
+    else if(currentPage==='feedback') main.innerHTML=renderFeedback();
     bindPageEvents();
   }catch(e){
     console.error('Errore rendering Libretto', e);
@@ -1347,6 +1416,39 @@ function bindPageEvents(){
 
   // stop / resume ricorrenti
   document.querySelectorAll('[data-stop-rec]').forEach(b=>b.addEventListener('click',()=>toggleRecurringStopped(b.dataset.stopRec,b.dataset.stopRecCat)));
+
+  // feedback send
+  const fbSendBtn=document.getElementById('fbSendBtn');
+  if(fbSendBtn) fbSendBtn.addEventListener('click',()=>{
+    const type=document.getElementById('fbType')?.value||'altro';
+    const title=(document.getElementById('fbTitle')?.value||'').trim();
+    const body=(document.getElementById('fbBody')?.value||'').trim();
+    const expected=(document.getElementById('fbExpected')?.value||'').trim();
+    if(!title){ toast('Inserisci almeno un titolo'); return; }
+    const typeLabel={'bug':'Segnalazione bug','feature':'Nuova funzionalità','miglioramento':'Miglioramento esistente','altro':'Altro'}[type]||type;
+    const user=cloud.user?.email||'utente non loggato';
+    const appVer=APP_VERSION||'?';
+    const subject=encodeURIComponent(`[Libretto Feedback] ${typeLabel}: ${title}`);
+    const mailBody=encodeURIComponent(
+`--- FEEDBACK LIBRETTO ---
+Tipo: ${typeLabel}
+Titolo: ${title}
+Utente: ${user}
+Versione app: ${appVer}
+
+DESCRIZIONE:
+${body||'(nessuna descrizione fornita)'}
+${expected?`\nCOMPORTAMENTO ATTESO:\n${expected}`:''}
+
+--- PROMPT CLAUDE CODE ---
+Contesto: app Libretto (finanze personali) — Vite + vanilla JS, src/main.js + src/constants.js + src/utils.js, deploy su GitHub Pages.
+Tipo richiesta: ${typeLabel}
+Titolo: ${title}
+Dettaglio: ${body||'(vedi sopra)'}${expected?`\nComportamento atteso: ${expected}`:''}
+Chiedi a Claude Code di: valutare la fattibilità, suggerire l'approccio migliore e implementare la modifica nel rispetto dell'architettura esistente.`
+    );
+    window.location.href=`mailto:manciaracina92@gmail.com?subject=${subject}&body=${mailBody}`;
+  });
   const dashboardAccountSelect=document.getElementById('dashboardAccountSelect');
   if(dashboardAccountSelect) dashboardAccountSelect.addEventListener('change',()=>{ state.settings.dashboardAccountId=dashboardAccountSelect.value; saveState(); render(); });
   const toggleDashboardBalances=document.getElementById('toggleDashboardBalances');
