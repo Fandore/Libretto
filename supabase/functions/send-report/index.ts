@@ -3,8 +3,8 @@
 // via Resend a tutti gli utenti registrati con dati nel periodo.
 //
 // Env vars richieste (impostare in Supabase Dashboard → Functions → Secrets):
-//   RESEND_API_KEY       → API key Resend (obbligatoria)
-//   RESEND_FROM_EMAIL    → "Libretto <noreply@tuodominio.com>" (obbligatoria)
+//   BREVO_API_KEY        → API key Brevo (obbligatoria)
+//   BREVO_FROM_EMAIL     → email mittente verificata su Brevo, es. "manciaracina92@gmail.com"
 //   CRON_SECRET          → stringa casuale per proteggere l'endpoint (obbligatoria)
 //
 // Env vars auto-iniettate da Supabase:
@@ -14,11 +14,11 @@
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2'
 
 /* ── Env ─────────────────────────────────────────────────────────────────── */
-const RESEND_API_KEY = Deno.env.get('RESEND_API_KEY')    ?? ''
-const RESEND_FROM    = Deno.env.get('RESEND_FROM_EMAIL') ?? 'Libretto <noreply@example.com>'
-const SUPABASE_URL   = Deno.env.get('SUPABASE_URL')      ?? ''
-const SERVICE_KEY    = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
-const CRON_SECRET    = Deno.env.get('CRON_SECRET')       ?? ''
+const BREVO_API_KEY    = Deno.env.get('BREVO_API_KEY')      ?? ''
+const BREVO_FROM_EMAIL = Deno.env.get('BREVO_FROM_EMAIL')   ?? ''
+const SUPABASE_URL     = Deno.env.get('SUPABASE_URL')       ?? ''
+const SERVICE_KEY      = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+const CRON_SECRET      = Deno.env.get('CRON_SECRET')        ?? ''
 
 /* ── Types ───────────────────────────────────────────────────────────────── */
 interface Tx {
@@ -315,8 +315,8 @@ Deno.serve(async (req: Request) => {
   } catch { /* ok */ }
 
   // Verifica env vars
-  if (!RESEND_API_KEY || !SUPABASE_URL || !SERVICE_KEY) {
-    console.error('Missing env vars: RESEND_API_KEY, SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY')
+  if (!BREVO_API_KEY || !SUPABASE_URL || !SERVICE_KEY) {
+    console.error('Missing env vars: BREVO_API_KEY, SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY')
     return new Response(JSON.stringify({ error: 'Missing env vars' }), { status: 500 })
   }
 
@@ -395,26 +395,26 @@ Deno.serve(async (req: Request) => {
       categories: appState.categories ?? [],
     })
 
-    const resendRes = await fetch('https://api.resend.com/emails', {
+    const brevoRes = await fetch('https://api.brevo.com/v3/smtp/email', {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${RESEND_API_KEY}`,
+        'api-key':      BREVO_API_KEY,
         'Content-Type': 'application/json',
       },
       body: JSON.stringify({
-        from:    RESEND_FROM,
-        to:      [user.email],
-        subject: `📊 Riepilogo ${type === 'weekly' ? 'settimanale' : 'mensile'} Libretto · ${label}`,
-        html,
+        sender:      { name: 'Libretto', email: BREVO_FROM_EMAIL },
+        to:          [{ email: user.email }],
+        subject:     `📊 Riepilogo ${type === 'weekly' ? 'settimanale' : 'mensile'} Libretto · ${label}`,
+        htmlContent: html,
       }),
     })
 
-    if (resendRes.ok) {
+    if (brevoRes.status === 201) {
       console.log(`✓ Mail inviata a ${user.email}`)
       results.push({ email: user.email, ok: true, period: label })
     } else {
-      const errText = await resendRes.text()
-      console.error(`✗ Errore Resend per ${user.email}:`, errText)
+      const errText = await brevoRes.text()
+      console.error(`✗ Errore Brevo per ${user.email}:`, errText)
       results.push({ email: user.email, ok: false, period: label, error: errText })
     }
   }
