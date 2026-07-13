@@ -1,3 +1,72 @@
+13/07/2026 — Sessione 7: Deploy mail riepilogo (v22.4) — LIVE ✅
+SAL:
+- Deploy infrastruttura completo:
+  - GitHub Actions workflow: .github/workflows/deploy-functions.yml
+  - Edge Function deployata via GitHub Actions (supabase/setup-cli)
+  - Secrets Supabase impostati: BREVO_API_KEY, BREVO_FROM_EMAIL, CRON_SECRET
+  - Cron job pg_cron attivi: settimanale (lunedì 08:00 UTC) + mensile (1° del mese 08:00 UTC)
+- Provider email: cambiato da Resend a Brevo (free tier, 300 mail/giorno)
+  - Resend richiedeva dominio verificato (libretto.daner.com non gestito da Vito)
+  - Brevo permette sender @gmail.com verificato, invia a tutti gli utenti
+  - Mail funzionante, arriva in spam inizialmente → risolvibile con "Non è spam" in Gmail
+- CRON_SECRET: libretto-cron-2026-xK9mQ (hardcodato nei cron job SQL)
+- Test manuale OK: {"sent":1} per manciaracina92@gmail.com
+
+NOTE OPERATIVE:
+  - Se la mail torna in spam: verificare un dominio custom su Brevo per DMARC corretto
+  - Per aggiornare la funzione: modificare src, git push → deploy automatico via GitHub Actions
+  - Per testare manualmente dal SQL Editor:
+      select net.http_post(
+        url := 'https://marvmbewsgxrabirugkk.supabase.co/functions/v1/send-report',
+        headers := jsonb_build_object('Content-Type','application/json','Authorization','Bearer libretto-cron-2026-xK9mQ'),
+        body := '{"type":"weekly"}'::jsonb
+      );
+
+--- STORICO ---
+10/07/2026 — Sessione 6: Mail riepilogo automatiche (v22.4)
+SAL:
+- Creata Supabase Edge Function TypeScript: supabase/functions/send-report/index.ts
+  - Parametro type = 'weekly' | 'monthly'
+  - Weekly: ultimi 7 giorni (da ieri a 7 gg fa); lanciato ogni lunedì alle 08:00 UTC
+  - Monthly: ciclo stipendio precedente (da stipendio(n-1) a stipendio(n)-1gg, per-utente)
+  - Legge tutti gli utenti da auth.users (service_role) + libretto_user_state
+  - Salta utenti senza transazioni nel periodo
+  - Calcola: totale entrate/uscite/saldo, spese per categoria, top 5 spese singole
+  - Monthly: aggiunge colonna Budget + % usato per categoria (da state.budgets)
+  - Invia mail HTML responsive via Resend API
+  - Protetta da CRON_SECRET (Authorization: Bearer <secret>)
+- Creato SQL setup: supabase/sql/cron_setup.sql
+  - Abilita pg_cron + pg_net
+  - Salva CRON_SECRET come parametro database (app.cron_secret)
+  - Schedula 2 cron job che chiamano la Edge Function via http_post
+  - Include comandi utili per manutenzione e test manuale
+
+PREREQUISITI PER IL DEPLOY:
+  1. Creare account su resend.com
+  2. Ottenere API key Resend
+  3. Verificare dominio mittente su Resend (o usare onboarding@resend.dev per test)
+  4. Installare Supabase CLI: npm install -g supabase
+  5. Login CLI: supabase login
+  6. Link progetto: supabase link --project-ref marvmbewsgxrabirugkk
+  7. Impostare secrets:
+       supabase secrets set RESEND_API_KEY=re_xxxx
+       supabase secrets set RESEND_FROM_EMAIL="Libretto <noreply@tuodominio.com>"
+       supabase secrets set CRON_SECRET=una-stringa-casuale-lunga
+  8. Deploy function: supabase functions deploy send-report --no-verify-jwt
+  9. Eseguire supabase/sql/cron_setup.sql nel Supabase SQL Editor
+     (ricordare di sostituire 'CAMBIA_QUESTO_VALORE' con il CRON_SECRET impostato)
+  10. Testare con: supabase functions invoke send-report --body '{"type":"monthly"}'
+
+--- STORICO ---
+09/07/2026 — Sessione 5: Form Feedback utenti (v22.3)
+SAL:
+- Aggiunta pagina "💬 Feedback" visibile a tutti gli utenti (non in ADMIN_ONLY_PAGES)
+- Form con campi: Tipo (bug/feature/miglioramento/altro), Titolo, Descrizione, Comportamento atteso
+- Al click "Invia feedback" si apre il client mail con subject e body già compilati
+- Il body include una sezione "PROMPT CLAUDE CODE" strutturata per agevolare la creazione di richieste tecniche
+- APP_VERSION aggiornata a 22.3-feedback-form
+
+--- STORICO ---
 09/07/2026 — Sessione 2: Migrazione a Vite + Deploy GitHub Pages
 SAL:
 - Introdotto Vite come build tool e dev server (npm + vite)
@@ -24,20 +93,50 @@ PROBLEMI RISCONTRATI E SOLUZIONI:
   impostata la sorgente: "Deploy from branch → gh-pages → /(root)".
 
 --- STORICO ---
+09/07/2026 — Sessione 3: Modularizzazione Fase 1 + fix Supabase redirect
+SAL:
+- Fix bug registrazione: la mail di conferma Supabase reindirizzava a fandore.github.io (404)
+  invece di fandore.github.io/Libretto/. Aggiunto emailRedirectTo nella chiamata signUp.
+  Aggiornato anche il dashboard Supabase (Site URL + Redirect URLs).
+- Modularizzazione Fase 1: estratti da src/main.js due nuovi moduli:
+  - src/constants.js → DEFAULT_CATEGORIES, ACCT_COLORS, EMOJI_CHOICES, COLOR_CHOICES, MONTHS_IT
+  - src/utils.js     → 16 funzioni pure (uid, isoToday, addDays, fmtEUR, fmtDate, escapeHTML,
+                        lastDayOfMonth, clampDay, dayStart, dateKey, parseISODate, nowIso,
+                        fmtDateTime, isTransfer, monthKeyFromDate, addMonths)
+- main.js ora importa da questi moduli; ridotto da 1776 a ~1745 righe (pulizia strutturale).
+- App testata in locale (npm run dev) e deployata su GitHub Pages — tutto funzionante.
+
+--- STORICO ---
+09/07/2026 — Sessione 4: Feature ricorrenti + cashflow (v22.2)
+SAL:
+- Aggiunta frequenza "Bimestrale" nel form movimenti (Mensile/Settimanale/Bimestrale/Annuale)
+- Proiezione cashflow: spese bimestrali/annuali appaiono solo nei mesi in cui cadono
+  (usa recurringNextDate per determinare i mesi corretti; fallback a equivalente mensile)
+- Proiezione cashflow: entrate = solo media stipendi storici, non tutto il reddito
+  (bonus e entrate una tantum non vengono proiettate nel futuro)
+- monthlyFixedTotal() ora usa recurringMonthlyEquivalent() per tutte le frequenze
+- Aggiunta funzionalità "Ferma/Riattiva ricorrenti":
+  - state.stoppedRecurrings[] registra le voci manualmente fermate
+  - Nel Dashboard → Riepilogo spese ricorrenti: tasto ⏹ per fermare ogni voce
+  - Le voci fermate appaiono in fondo con tasto ▶ Riattiva
+  - Le voci fermate sono escluse da proiezioni e totali
+- APP_VERSION aggiornata a 22.2-bimestrale-salary-cashflow
+
+--- STORICO ---
 08/07/2026 — Sessione 1: Pulizia CSS
 - Spostato lo <style> inline in css/app.css, eliminando ~100 righe da index.html
 
 --- NEXT STEPS ---
 1. ✅ Migrazione a Vite completata
 2. ✅ Deploy su GitHub Pages via gh-pages branch
-3. Suddividere src/main.js in moduli separati:
-   - src/constants.js  → DEFAULT_CATEGORIES, colori, emoji
-   - src/state.js      → oggetto state e funzioni derivate
-   - src/storage.js    → localStorage + Supabase (cloud sync)
-   - src/utils.js      → funzioni di utilità (date, formattazione, ecc.)
-   - src/pages/        → una funzione renderXxx per ogni sezione
-   - src/components/   → modal, toast, sidebar
-4. Aggiornare src/main.js come entry point che importa i moduli
-5. Implementare le nuove funzionalità richieste (vedi note/ChatGPT_requests.txt):
-   - Frequenza "bimestrale" e "annuale" per le spese ricorrenti
-   - Entrate diverse da Stipendio non contate come ricorrenti nei cashflow
+3. ✅ Modularizzazione Fase 1: src/constants.js + src/utils.js
+4. ✅ Frequenza bimestrale/annuale per spese ricorrenti (ChatGPT req. 1)
+5. ✅ Entrate non-stipendio escluse dai cashflow (ChatGPT req. 2)
+6. ✅ Stop/Riattiva spese ricorrenti
+7. ✅ Pagine visibili solo all'admin (req. 3)
+8. ✅ Form feedback utenti con mailto: strutturato (req. 4)
+9. ✅ Backlog approvato in coda a ChatGPT_requests.txt (req. 5)
+10. Backlog (vedi ChatGPT_requests.txt):
+    - ✅ req. 6: Mail riepilogo settimanale + mensile (sessione 6)
+    - req. 7: Importi ricorrenti variabili (media ultimi 3 per bollette)
+    - req. 8: Modularizzazione Fase 2 — src/state.js + src/storage.js

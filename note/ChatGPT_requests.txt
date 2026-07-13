@@ -1,3 +1,26 @@
 Richieste aggiornamenti app:
-1 - Inserire frequenza "bimestrale" e "annuale" per le spese ricorrenti
-2 - Far capire che entrate diverse da Stipendio non sono da considerare ricorrenti per il futuro e per i cashflows
+1 ✅ - Inserire frequenza "bimestrale" e "annuale" per le spese ricorrenti
+2 ✅ - Far capire che entrate diverse da Stipendio non sono da considerare ricorrenti per il futuro e per i cashflows
+3 ✅ - Vorrei che le pagine visibili agli utenti che non sono "manciaracina92@gmail.com" l'admin, siano solo quelle di utilizzo, e non quelle come Utenti/Cloud o Help.
+4 ✅ - Per tutti gli utenti vorrei che ci fosse una sezione in cui possono suggerire aggiornamenti/modifiche o segnalare errori, con un form che gli consenta di inviare direttamente una mail a "manciaracina92@gmail.com" in un formato che mi aiuti a creare un prompt per claude code che verifica se si puo' fare e come meglio fare quella modifica.
+5 ✅ - Tutte le modifiche suggerite e da me approvate vengono aggiunte in coda a questa nota per procedere passo passo alle prossime release.
+
+
+--- BACKLOG APPROVATO (prossime release) ---
+
+
+6 ✅ DEPLOYATO 13/07/2026 - Mail riepilogo spese (settimanale + mensile):
+    Ricevere automaticamente una mail con: totale entrate/uscite del periodo, riepilogo per
+    categoria, top 5 spese, stato rispetto al budget.
+    Approccio approvato: Supabase Edge Function (TypeScript) + pg_cron per lo scheduling
+    (ogni lunedì per il settimanale, primo del mese per il mensile) + Resend come provider
+    email (free tier, 3.000 mail/mese). La Edge Function legge i dati dal DB Supabase,
+    calcola i totali e invia la mail formattata in HTML all'utente registrato.
+    Prerequisiti: account Resend, API key, verifica dominio mittente.
+
+7 - Importi ricorrenti variabili: per spese come bollette (luce, gas) che variano ogni mese,
+    usare la media degli ultimi 3 importi registrati invece di un valore fisso nelle proiezioni cashflow.
+
+8 - Modularizzazione Fase 2: estrarre src/state.js (state object + category helpers)
+    e src/storage.js (localStorage + Supabase sync) da main.js.
+    Nota: richiede attenzione alle dipendenze circolari (storage chiama render, render usa storage).
