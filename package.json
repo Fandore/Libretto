@@ -21,6 +21,10 @@
   "homepage": "https://github.com/Fandore/Libretto#readme",
   "devDependencies": {
     "gh-pages": "^6.3.0",
+    "supabase": "^2.109.1",
     "vite": "^8.1.4"
+  },
+  "dependencies": {
+    "xlsx": "^0.18.5"
   }
 }

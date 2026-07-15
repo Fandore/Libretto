@@ -1,3 +1,88 @@
+15/07/2026 — Sessione 10: Parser IsyBank + "Novità" banner (v22.8) — LIVE ✅
+SAL:
+- Aggiunto formato IsyBank in src/bankImport.js:
+  - csvToRowsComma(): parser CSV con virgola come delimitatore (vs punto e virgola di ING)
+  - ISYBANK_CATEGORY_MAP: mapping categorie IsyBank → categorie default Libretto
+    (es. "Ristoranti e bar"→Ristoranti, "Generi alimentari e supermercato"→Spesa, "Farmacia"→Salute)
+  - parseIsyBankRows(): rileva header row con row[0]==="Data" (dopo N righe di metadata account)
+    - Colonne: Data | Operazione | Dettagli | Conto o carta | Contabilizzazione | Categoria | Valuta | Importo
+    - Importo: plain float con punto decimale (non formato italiano), signed (negativo=uscita)
+    - categoryHint: passa la categoria banca al wizard per auto-suggerimento
+    - rawDescription: campo Dettagli usato per il tooltip sull'esercente
+  - parseIsyBank(): branch CSV (csvToRowsComma) vs XLSX (xlsxToRows) come ING
+  - BANK_FORMATS aggiornato con entry IsyBank + categoryMap
+- main.js openBankImportStep2: logica categoryHint
+  - Se suggestCategoryForPayee(payee) non trova match, controlla r.categoryHint via fmt.categoryMap
+  - Verifica che la categoria mappata esista in catNames() prima di assegnarla
+  - Risultato: le spese IsyBank mostrano ✅ pronto con categoria già mappata (es. Farmacia→Salute)
+- APP_VERSION aggiornata a 22.8-isybank
+- Banner "Novità" (showWhatsNew):
+  - Costante WHATS_NEW in main.js: testo HTML aggiornabile ad ogni deploy
+  - state._meta.lastSeenVersion: traccia l'ultima versione vista dall'utente
+    - Nuovi utenti: lastSeenVersion=APP_VERSION in init → banner mai mostrato
+    - Utenti esistenti: lastSeenVersion!=APP_VERSION → banner mostrato una volta sola
+  - showWhatsNew(): snackbar fisso in basso, sparisce dopo 10s o al click ✕
+  - CSS in app.css: #whatsNewBanner con animazione slideUp, border-left sage
+  - Per ogni deploy: aggiornare APP_VERSION e WHATS_NEW (una riga in main.js)
+- Formato CSV IsyBank: 7 righe metadata → header riga 8 → dati (con molte righe vuote finali)
+- Formato XLSX IsyBank: stesso schema colonne, xlsxToRows gestisce automaticamente
+
+--- STORICO ---
+15/07/2026 — Sessione 9: Import da homebanking (v22.7) — LIVE ✅
+SAL:
+- req. 10: Wizard import movimenti da file CSV banca
+  - Nuovo modulo src/bankImport.js: registry BANK_FORMATS + parser ING Italia
+    - parseITAmount: gestisce formato IT (1.234,56), parseING: CSV `;`-delimitato
+    - extractPayeeING: estrae esercente dalla DESCRIZIONE per tipo CAUSALE
+      (Pagamento Carta → dopo "presso"; Addebito Diretto → tra Creditor id. e Id Mandato;
+       Bonifico In Uscita → dopo "A favore di"; Accredito Bonifico → dopo "Anagrafica Ordinante")
+    - Salta righe senza CAUSALE (Saldo iniziale / Saldo finale)
+    - Usa DATA VALUTA come data transazione (fallback DATA CONTABILE)
+  - state.merchantMappings: {} — nuovo campo persistito per memorizzare payee→category
+  - migrateState: guard `if(!state.merchantMappings) state.merchantMappings={}`
+  - suggestCategoryForPayee(payee): cerca prima in merchantMappings, poi in transazioni esistenti (moda)
+  - isDuplicateBankTx(date,amount,type,payee,accountId): rileva duplicati per (data,importo,tipo,esercente,conto)
+  - openBankImportWizard(): Step 1 — selezione formato banca + conto + carica file
+  - openBankImportStep2(): Step 2 — tabella revisione con:
+    - Riga ✅ pronto: categoria auto-suggerita (nascosta in input hidden)
+    - Riga ⚠️ nuovo: dropdown selezione categoria + checkbox 💾 "Ricorda esercente"
+    - Riga 🔄 duplicato: opacità ridotta, deselezionato di default
+    - Contatore live movimenti da importare
+    - Al conferma: salva merchantMappings per le righe con "Ricorda" checked, inserisce tx, sort, toast
+  - Bottone "🏦 Importa banca" aggiunto in topbar pagina Movimenti
+  - CSS: .bi-status (ok/new/dup), .bi-payee-cell, responsive media query
+  - APP_VERSION aggiornata a 22.7-bank-import
+- Fix debug sessione (CSV + XLSX):
+  - BOM handling più robusto (strip per-riga, non solo inizio testo)
+  - parseITAmount: gestisce JS number diretto (da Excel) senza stringificare
+  - xlsxToRows: usa cellDates:true → Date objects convertiti a DD/MM/YYYY
+  - itDateToISO: accetta anche D/M/YYYY e YYYY-MM-DD oltre DD/MM/YYYY
+  - parseINGRows: colonne dinamiche via findIndex sull'header (non più hardcoded [0]-[5])
+  - Scoperto: formato ING Excel ≠ CSV
+    CSV:   DATA CONTABILE | DATA VALUTA | USCITE | ENTRATE | CAUSALE | DESCRIZIONE OPERAZIONE
+    Excel: DATA CONTABILE | DATA VALUTA | CAUSALE | DESCRIZIONE OPERAZIONE | IMPORTO IN EURO (header riga 12)
+  - Parser ora gestisce entrambi i formati automaticamente (branch iImporto vs iUscite/iEntrate)
+- Bottone "+ Richiedila" nel wizard Step 1: apre mailto pre-compilata all'admin
+  con istruzioni per inviare file di esempio anonimizzato per richiedere nuovi formati banca
+- Architettura BANK_FORMATS registry: per aggiungere un nuovo formato basta aggiungere un entry con { id, label, accept, parse } in src/bankImport.js
+
+--- STORICO ---
+13/07/2026 — Sessione 8: Tutorial onboarding (v22.6)
+SAL:
+- Aggiunto tutorial walkthrough a 7 step per i nuovi utenti:
+  - state.tutorialSeen (bool) aggiunto allo state + migrazione in migrateState()
+  - Costante TUTORIAL_STEPS (array 7 oggetti: icon, title, text, page)
+  - Funzione openTutorialModal(step=0): modal multi-step con Avanti/Indietro/Salta
+  - Auto-trigger al primo utilizzo: if(!state.tutorialSeen) openTutorialModal(0) in init()
+  - Step 7 (ultimo): CTA "Inizia dai Conti →" che chiude e naviga su accounts
+  - Salta / chiusura X → state.tutorialSeen=true, saveState()
+- Tasto "❓ Tour guidato" aggiunto in sidebar (index.html), fuori dal <nav>
+  - Al click apre il tutorial dallo step corrispondente alla pagina corrente
+  - Mappa pagina→step: accounts:1, transactions:2, dashboard:3, budget:4, goals:5, analytics:6
+  - Chiude il menu mobile al click
+- APP_VERSION aggiornata a 22.6-tutorial
+
+--- STORICO ---
 13/07/2026 — Sessione 7: Importi ricorrenti variabili (v22.5) + Deploy mail riepilogo (v22.4) — LIVE ✅
 SAL:
 - req. 7: Aggiunta funzione avgLastNAmounts(payee, category, n=3) in src/main.js

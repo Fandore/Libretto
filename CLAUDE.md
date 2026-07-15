@@ -57,7 +57,7 @@ Unico oggetto `state` in `main.js` con: `accounts`, `categories`, `budgets`, `go
 
 ### Versioning
 Stringa `APP_VERSION` in `main.js` — formato: `22.x-descrizione`.
-Versione corrente: **v22.4** (mail riepilogo automatiche — LIVE dal 13/07/2026, provider: Brevo).
+Versione corrente: **v22.7** (import homebanking — 15/07/2026).
 
 ### Pagine admin-only
 Le pagine visibili solo all'admin (`manciaracina92@gmail.com`) sono definite in un array
@@ -92,9 +92,14 @@ supabase functions invoke send-report --body '{"type":"monthly"}'
 ---
 
 ## Backlog (prossime sessioni)
-- **req. 7:** Importi ricorrenti variabili — usare media ultimi 3 importi per bollette nelle proiezioni
+- **req. 10:** ✅ Import movimenti da file bancario — **COMPLETATO v22.7**
+  - Wizard 2 step in `src/bankImport.js` + `src/main.js`; registry `BANK_FORMATS` estensibile
+  - Parser ING Italia: CSV `;`, data valuta, payee estratto da DESCRIZIONE per CAUSALE
+  - `state.merchantMappings` per memorizzare payee→category; suggestCategoryForPayee + isDuplicateBankTx
+  - Per aggiungere nuova banca: aggiungere entry `{ id, label, accept, parse }` a `BANK_FORMATS` in `src/bankImport.js`
 - **req. 8:** Modularizzazione Fase 2 — estrarre `src/state.js` + `src/storage.js` da `main.js`
   *(attenzione a dipendenze circolari: storage chiama render, render usa storage)*
+- **req. 9:** Export movimenti in Excel per intervallo date (SheetJS lato client, stesse colonne del CSV import)
 
 ---
 

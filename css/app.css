@@ -277,5 +277,18 @@ canvas.lib-chart{width:100%;height:260px;display:block;background:rgba(255,255,2
 .import-preview th,.import-preview td{padding:8px 9px;border-bottom:1px dashed var(--line);text-align:left;white-space:nowrap;}
 .import-preview th{color:var(--cream-dim);font-size:11px;text-transform:uppercase;letter-spacing:.5px;background:var(--surface-2);position:sticky;top:0;}
 .import-error{color:var(--coral);font-size:12.5px;margin-top:4px;}
+.bi-payee-cell{max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.bi-status{font-size:11px;white-space:nowrap;}
+.bi-status.ok{color:var(--sage);}
+.bi-status.new{color:var(--amber);}
+.bi-status.dup{color:var(--cream-dim);}
+@media(max-width:700px){.bi-payee-cell{max-width:110px;} .import-preview th:nth-child(6),.import-preview td:nth-child(6){display:none;}}
 
 .prompt-box{width:100%;min-height:160px;background:var(--surface-2);border:1px solid var(--line);color:var(--cream);padding:12px;border-radius:9px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.45;resize:vertical;}
+
+/* -------- What's New banner -------- */
+#whatsNewBanner{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--card);border:1px solid var(--sage);border-left:3px solid var(--sage);color:var(--cream);padding:11px 14px 11px 16px;border-radius:9px;display:flex;align-items:center;gap:12px;font-size:13px;max-width:460px;width:calc(100% - 32px);box-shadow:0 4px 22px rgba(0,0,0,.45);z-index:9999;animation:wnSlideUp .3s ease;}
+@keyframes wnSlideUp{from{transform:translateX(-50%) translateY(16px);opacity:0}to{transform:translateX(-50%) translateY(0);opacity:1}}
+.wn-text{flex:1;line-height:1.45;}
+.wn-close{background:none;border:none;color:var(--cream-dim);cursor:pointer;font-size:15px;padding:0 2px;flex-shrink:0;line-height:1;}
+.wn-close:hover{color:var(--cream);}

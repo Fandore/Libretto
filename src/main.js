@@ -1,5 +1,6 @@
 import { DEFAULT_CATEGORIES, ACCT_COLORS, EMOJI_CHOICES, COLOR_CHOICES, MONTHS_IT } from './constants.js';
 import { uid, isoToday, addDays, fmtEUR, fmtDate, escapeHTML, lastDayOfMonth, clampDay, dayStart, dateKey, parseISODate, nowIso, fmtDateTime, isTransfer, monthKeyFromDate, addMonths } from './utils.js';
+import { BANK_FORMATS, parseBankFile } from './bankImport.js';
 
 /* ============ STATE ============ */
 let state = {
@@ -17,7 +18,9 @@ let state = {
   transactions:[],
   alertsDismissed:{},
   settings:{salaryDay:27},
-  stoppedRecurrings:[]
+  stoppedRecurrings:[],
+  tutorialSeen:false,
+  merchantMappings:{}
 };
 
 /* ============ CATEGORY HELPERS ============ */
@@ -170,7 +173,9 @@ function seedTransactions(){
 }
 
 /* ============ PERSISTENCE — STANDALONE BROWSER ============ */
-const APP_VERSION = '22.5-variable-recurring';
+const APP_VERSION = '22.8-isybank';
+// Aggiorna questo testo ad ogni deploy — viene mostrato una volta agli utenti esistenti.
+const WHATS_NEW = '🏦 Novità: puoi importare i movimenti da <b>IsyBank</b> — le categorie vengono riconosciute automaticamente.';
 const PRECONFIGURED_SUPABASE_URL = 'https://marvmbewsgxrabirugkk.supabase.co';
 const PRECONFIGURED_SUPABASE_ANON_KEY = 'sb_publishable_Jsd4sX6_6pNCUqHIcun4lA_9F81WlPg';
 const STORAGE_KEY = 'libretto-v2-standalone-state';
@@ -670,6 +675,24 @@ function alertsHTML(year,month){
 const ADMIN_EMAIL='manciaracina92@gmail.com';
 const ADMIN_ONLY_PAGES=['cloud','help'];
 function isAdmin(){ return !cloud.user || cloud.user.email===ADMIN_EMAIL; }
+
+/* ============ TUTORIAL STEPS ============ */
+const TUTORIAL_STEPS = [
+  { icon:'📓', title:'Benvenuto in Libretto!', page:null,
+    text:'Libretto è la tua app personale per gestire le finanze di casa. Tieni traccia delle spese, monitora il budget e pianifica i risparmi — tutto in un unico posto.<br><br>Questo breve tour ti mostra le sezioni principali.' },
+  { icon:'🏦', title:'I tuoi Conti', page:'accounts',
+    text:'Inizia da qui. Inserisci i tuoi conti (corrente, risparmio, investimenti) con il saldo attuale.<br><br>Tutti i movimenti sono collegati a un conto: i saldi si aggiornano automaticamente ad ogni transazione.' },
+  { icon:'📑', title:'Movimenti', page:'transactions',
+    text:'Registra ogni entrata e uscita. Puoi indicare la categoria, il conto, la data e impostare spese <b>ricorrenti</b> (mensili, settimanali, bimestrali, annuali).<br><br>I movimenti ricorrenti appaiono nelle proiezioni cashflow automaticamente.' },
+  { icon:'📒', title:'Dashboard', page:'dashboard',
+    text:'La tua panoramica finanziaria del ciclo corrente (dallo Stipendio di questo mese al prossimo).<br><br>Trovi: saldo conti, avanzamento budget per categoria, spese ricorrenti e le ultime transazioni.' },
+  { icon:'🎯', title:'Budget', page:'budget',
+    text:'Imposta un tetto mensile per ogni categoria (es. €350 per Spesa, €120 per Ristoranti).<br><br>La Dashboard ti mostra in tempo reale quanto hai già speso rispetto al budget impostato.' },
+  { icon:'🏺', title:'Obiettivi di risparmio', page:'goals',
+    text:'Definisci un traguardo di risparmio collegato a un conto (es. "Fondo emergenza: €5.000 su Conto Arancio").<br><br>Libretto calcola automaticamente il progresso in base al saldo del conto.' },
+  { icon:'📈', title:'Analisi e Cashflow', page:'analytics',
+    text:'Esplora le tendenze delle tue spese nel tempo, confronta mesi diversi e visualizza la proiezione del tuo cashflow futuro basata sulle spese ricorrenti e lo stipendio medio.<br><br><b>Pronto? Inizia dai Conti per inserire i tuoi saldi!</b>' }
+];
 function updateNavVisibility(){
   const admin=isAdmin();
   ADMIN_ONLY_PAGES.forEach(page=>{
@@ -689,8 +712,10 @@ function setPage(p){
   if(!isAdmin() && ADMIN_ONLY_PAGES.includes(p)) p='dashboard';
   currentPage=p; selectedTxIds=new Set(); document.querySelectorAll('.navbtn').forEach(b=>b.classList.toggle('active',b.dataset.page===p)); render(); document.getElementById('sidebar').classList.remove('open');
 }
-document.querySelectorAll('.navbtn').forEach(b=>b.addEventListener('click',()=>setPage(b.dataset.page)));
+document.querySelectorAll('.navbtn[data-page]').forEach(b=>b.addEventListener('click',()=>setPage(b.dataset.page)));
 document.getElementById('menuToggle').addEventListener('click',()=>document.getElementById('sidebar').classList.toggle('open'));
+const PAGE_TO_TUTORIAL_STEP={accounts:1,transactions:2,dashboard:3,budget:4,goals:5,analytics:6};
+document.getElementById('tutorialBtn').addEventListener('click',()=>{ openTutorialModal(PAGE_TO_TUTORIAL_STEP[currentPage]??0); document.getElementById('sidebar').classList.remove('open'); });
 
 /* ============ MONTH SWITCH ============ */
 function monthSwitchHTML(){
@@ -886,8 +911,9 @@ function renderTransactions(){
     <h1>Movimenti</h1>
     <div class="topbar-right">
       <button class="btn small ghost" id="downloadTxTemplateBtn">⬇️ Template CSV</button>
-      <button class="btn small" id="bulkImportTxBtn">⬆️ Importa CSV</button>
+      <button class="btn small ghost" id="bulkImportTxBtn">⬆️ Importa CSV</button>
       <input type="file" id="bulkImportTxFile" accept=".csv,text/csv,.txt" style="display:none">
+      <button class="btn small" id="bankImportBtn">🏦 Importa banca</button>
       <button class="btn small danger" id="delAllBtn">🗑 Elimina tutti</button>
     </div>
   </div>
@@ -1391,6 +1417,205 @@ function handleBulkImportFile(file){
   reader.readAsText(file);
 }
 
+/* ============ BANK IMPORT WIZARD ============ */
+
+/** Returns the most likely category for a payee, or null if unknown. */
+function suggestCategoryForPayee(payee){
+  if(!payee) return null;
+  const key=(payee||'').toLowerCase().trim();
+  const mapped=(state.merchantMappings||{})[key];
+  if(mapped) return mapped.category;
+  const cats=state.transactions.filter(t=>(t.payee||'').toLowerCase().trim()===key).map(t=>t.category).filter(Boolean);
+  if(!cats.length) return null;
+  const freq={};
+  cats.forEach(c=>{ freq[c]=(freq[c]||0)+1; });
+  return Object.entries(freq).sort((a,b)=>b[1]-a[1])[0][0];
+}
+
+/** True if a transaction with same (date, amount, type, payee) already exists on the given account. */
+function isDuplicateBankTx(date,amount,type,payee,accountId){
+  return state.transactions.some(t=>
+    t.account===accountId &&
+    t.date===date &&
+    t.type===type &&
+    Math.round(Math.abs(t.amount)*100)===Math.round(amount*100) &&
+    (t.payee||'').toLowerCase().trim()===(payee||'').toLowerCase().trim()
+  );
+}
+
+function openBankImportWizard(){
+  const fmtOptions=BANK_FORMATS.map(f=>`<option value="${escapeHTML(f.id)}">${escapeHTML(f.label)}</option>`).join('');
+  const acctOptions=state.accounts.map(a=>`<option value="${a.id}">${escapeHTML(a.name)}</option>`).join('');
+  document.getElementById('modalRoot').innerHTML=`
+  <div class="modal-bg" id="bankImportBg">
+    <div class="modal" style="max-width:480px">
+      <button class="close-x" id="biClose">✕</button>
+      <h3>🏦 Importa da homebanking</h3>
+      <p style="font-size:13px;color:var(--cream-dim);margin:0 0 18px">Carica il file CSV scaricato dalla tua banca per importare i movimenti in blocco, con rilevamento automatico dei duplicati.</p>
+      <div class="field"><label>Formato banca</label><select id="biFormat">${fmtOptions}</select></div>
+      <div style="margin:-8px 0 14px;font-size:12px;color:var(--cream-dim)">
+        La tua banca non è in lista?
+        <button id="biRequestFmt" class="btn ghost small" style="font-size:12px;padding:3px 10px;display:inline-block">+ Richiedila</button>
+      </div>
+      <div class="field"><label>Conto di destinazione</label><select id="biAccount">${acctOptions}</select></div>
+      <div class="field"><label>File banca</label><input type="file" id="biFile" accept=".csv,.xlsx,.xls,text/csv" style="color:var(--cream)"></div>
+      <div class="modal-actions">
+        <button class="btn ghost" id="biCancel">Annulla</button>
+        <button class="btn" id="biNext1" disabled>Analizza →</button>
+      </div>
+    </div>
+  </div>`;
+  document.getElementById('bankImportBg').addEventListener('click',e=>{ if(e.target.id==='bankImportBg') closeModal(); });
+  document.getElementById('biClose').addEventListener('click',closeModal);
+  document.getElementById('biCancel').addEventListener('click',closeModal);
+  document.getElementById('biRequestFmt').addEventListener('click',e=>{
+    e.preventDefault(); e.stopPropagation();
+    const subject=encodeURIComponent('[Libretto] Richiesta nuovo formato banca');
+    const body=encodeURIComponent(
+`Ciao,
+
+vorrei richiedere il supporto per importare i movimenti dalla mia banca.
+
+Nome banca: [inserisci nome]
+Formato file: [ ] CSV  [ ] Excel (.xlsx)
+
+In allegato trovi un file di esempio anonimizzato (ho sostituito le descrizioni sensibili con testo generico e ho lasciato solo la struttura delle colonne).
+
+Grazie!`
+    );
+    window.open(`mailto:${ADMIN_EMAIL}?subject=${subject}&body=${body}`,'_blank');
+  });
+  const fileEl=document.getElementById('biFile');
+  const nextBtn=document.getElementById('biNext1');
+  fileEl.addEventListener('change',()=>{ nextBtn.disabled=!fileEl.files.length; });
+  nextBtn.addEventListener('click',()=>{
+    const file=fileEl.files[0];
+    const formatId=document.getElementById('biFormat').value;
+    const accountId=document.getElementById('biAccount').value;
+    if(!file||!formatId||!accountId) return;
+    const reader=new FileReader();
+    reader.onload=()=>openBankImportStep2(formatId,accountId,reader.result);
+    const isExcel=/\.(xlsx|xls)$/i.test(file.name);
+    if(isExcel) reader.readAsArrayBuffer(file);
+    else reader.readAsText(file);
+  });
+}
+
+function openBankImportStep2(formatId,accountId,fileText){
+  const {rows,errors}=parseBankFile(formatId,fileText);
+  if(errors.length){
+    document.getElementById('modalRoot').innerHTML=`
+    <div class="modal-bg" id="bankImportBg">
+      <div class="modal" style="max-width:480px">
+        <button class="close-x" id="biClose">✕</button>
+        <h3>🏦 Importa da homebanking</h3>
+        <div class="alert-banner danger"><div class="aicon">⚠️</div><div class="abody"><div class="atitle">Errore nel file</div><div class="adesc">${escapeHTML(errors.join(' · '))}</div></div></div>
+        <div class="modal-actions"><button class="btn ghost" id="biBackErr">← Torna indietro</button></div>
+      </div>
+    </div>`;
+    document.getElementById('biClose').addEventListener('click',closeModal);
+    document.getElementById('biBackErr').addEventListener('click',openBankImportWizard);
+    return;
+  }
+  const fmt=BANK_FORMATS.find(f=>f.id===formatId);
+  const enriched=rows.map(r=>{
+    let suggestedCat=suggestCategoryForPayee(r.payee);
+    if(!suggestedCat&&r.categoryHint&&fmt?.categoryMap){
+      const mapped=fmt.categoryMap[(r.categoryHint||'').toLowerCase().trim()];
+      if(mapped&&catNames().includes(mapped)) suggestedCat=mapped;
+    }
+    return{...r,suggestedCat,isDup:isDuplicateBankTx(r.date,r.amount,r.type,r.payee,accountId)};
+  });
+  const nDup=enriched.filter(r=>r.isDup).length;
+  const nUnknown=enriched.filter(r=>!r.isDup&&!r.suggestedCat).length;
+  const nReady=enriched.filter(r=>!r.isDup&&r.suggestedCat).length;
+  const acctName=state.accounts.find(a=>a.id===accountId)?.name||'';
+  const catOptions=catNames().map(c=>`<option value="${c}">${catIcon(c)} ${c}</option>`).join('');
+  document.getElementById('modalRoot').innerHTML=`
+  <div class="modal-bg" id="bankImportBg">
+    <div class="modal" style="max-width:940px">
+      <button class="close-x" id="biClose2">✕</button>
+      <h3>🏦 Revisione movimenti — ${escapeHTML(acctName)}</h3>
+      <div class="mini-grid" style="grid-template-columns:repeat(4,1fr);margin-bottom:12px">
+        <div class="mini-kpi"><div class="mlabel">Totale file</div><div class="mvalue">${enriched.length}</div></div>
+        <div class="mini-kpi"><div class="mlabel">Pronti ✅</div><div class="mvalue" style="color:var(--sage)">${nReady}</div></div>
+        <div class="mini-kpi"><div class="mlabel">Nuovi ⚠️</div><div class="mvalue" style="${nUnknown?'color:var(--amber)':''}">${nUnknown}</div></div>
+        <div class="mini-kpi"><div class="mlabel">Duplicati 🔄</div><div class="mvalue" style="color:var(--cream-dim)">${nDup}</div></div>
+      </div>
+      <div style="font-size:12px;color:var(--cream-dim);margin-bottom:10px">I duplicati sono deselezionati. Per gli esercenti <b style="color:var(--amber)">⚠️ nuovi</b> scegli la categoria; attiva 💾 per ricordare il mapping in futuro.</div>
+      <div class="import-preview" style="max-height:400px">
+        <table>
+          <thead><tr><th>✓</th><th>Data</th><th>Esercente</th><th>Importo</th><th>Categoria</th><th>Stato</th><th title="Ricorda esercente">💾</th></tr></thead>
+          <tbody>
+            ${enriched.map((r,i)=>{
+              const amtHtml=`<span class="num ${r.type==='in'?'pos':'neg'}">${r.type==='in'?'+':'-'}${fmtEUR(r.amount)}</span>`;
+              let status, catCell, rememberCell='';
+              if(r.isDup){
+                status=`<span class="bi-status dup">🔄 duplicato</span>`;
+                catCell=`<span style="color:var(--cream-dim);font-size:12px">${escapeHTML(r.suggestedCat||'—')}</span>`;
+              } else if(r.suggestedCat){
+                status=`<span class="bi-status ok">✅ pronto</span>`;
+                catCell=`<span style="font-size:13px">${catIcon(r.suggestedCat)} ${escapeHTML(r.suggestedCat)}</span><input type="hidden" class="bi-cat-val" data-idx="${i}" value="${escapeHTML(r.suggestedCat)}">`;
+              } else {
+                status=`<span class="bi-status new">⚠️ nuovo</span>`;
+                catCell=`<select class="bi-cat-sel" data-idx="${i}" style="font-size:12px;padding:3px 5px;min-width:130px"><option value="">— scegli —</option>${catOptions}</select>`;
+                rememberCell=`<input type="checkbox" class="bi-remember" data-idx="${i}" title="Ricorda categoria per '${escapeHTML(r.payee)}'">`;
+              }
+              return `<tr style="${r.isDup?'opacity:.4':''}">
+                <td><input type="checkbox" class="bi-include" data-idx="${i}" ${!r.isDup?'checked':''}></td>
+                <td style="white-space:nowrap">${escapeHTML(r.date)}</td>
+                <td class="bi-payee-cell" title="${escapeHTML(r.rawDescription)}">${escapeHTML(r.payee)}</td>
+                <td>${amtHtml}</td>
+                <td>${catCell}</td>
+                <td>${status}</td>
+                <td style="text-align:center">${rememberCell}</td>
+              </tr>`;
+            }).join('')}
+          </tbody>
+        </table>
+      </div>
+      <div class="modal-actions">
+        <button class="btn ghost" id="biBack2">← Indietro</button>
+        <button class="btn" id="biConfirm">Importa <span id="biCount">0</span> movimenti</button>
+      </div>
+    </div>
+  </div>`;
+  function updateCount(){
+    const n=document.querySelectorAll('.bi-include:checked').length;
+    const el=document.getElementById('biCount');
+    const btn=document.getElementById('biConfirm');
+    if(el) el.textContent=n;
+    if(btn) btn.disabled=n===0;
+  }
+  document.getElementById('bankImportBg').addEventListener('click',e=>{ if(e.target.id==='bankImportBg') closeModal(); });
+  document.getElementById('biClose2').addEventListener('click',closeModal);
+  document.getElementById('biBack2').addEventListener('click',openBankImportWizard);
+  document.querySelectorAll('.bi-include').forEach(cb=>cb.addEventListener('change',updateCount));
+  updateCount();
+  document.getElementById('biConfirm').addEventListener('click',()=>{
+    const included=[...document.querySelectorAll('.bi-include:checked')].map(cb=>parseInt(cb.dataset.idx));
+    if(!included.length) return;
+    const newTxs=[];
+    for(const i of included){
+      const r=enriched[i];
+      const autoEl=document.querySelector(`.bi-cat-val[data-idx="${i}"]`);
+      const selEl=document.querySelector(`.bi-cat-sel[data-idx="${i}"]`);
+      const category=autoEl?autoEl.value:(selEl?selEl.value:(r.suggestedCat||''));
+      if(!category){ toast(`Scegli una categoria per: ${r.payee}`); return; }
+      const rememberEl=document.querySelector(`.bi-remember[data-idx="${i}"]`);
+      if(rememberEl&&rememberEl.checked){
+        if(!state.merchantMappings) state.merchantMappings={};
+        state.merchantMappings[(r.payee||'').toLowerCase().trim()]={category};
+      }
+      newTxs.push({id:uid(),date:r.date,account:accountId,category,payee:r.payee,amount:r.amount,type:r.type,movementType:'standard',transferTo:null,goalId:null,recurring:false,recurringFreq:null,recurringNextDate:null});
+    }
+    state.transactions.push(...newTxs);
+    state.transactions.sort((a,b)=>a.date<b.date?1:-1);
+    touchState(); saveState(); closeModal(); render();
+    toast(`${newTxs.length} moviment${newTxs.length===1?'o':'i'} importat${newTxs.length===1?'o':'i'} ✓`);
+  });
+}
+
 /* ============ BIND PAGE EVENTS ============ */
 function bindPageEvents(){
   // month nav
@@ -1562,6 +1787,8 @@ Chiedi a Claude Code di: valutare la fattibilità, suggerire l'approccio miglior
   const bulkFile=document.getElementById('bulkImportTxFile');
   if(bulkBtn&&bulkFile) bulkBtn.addEventListener('click',()=>bulkFile.click());
   if(bulkFile) bulkFile.addEventListener('change',()=>{ handleBulkImportFile(bulkFile.files[0]); bulkFile.value=''; });
+  const bankImportBtn=document.getElementById('bankImportBtn');
+  if(bankImportBtn) bankImportBtn.addEventListener('click',openBankImportWizard);
 
   // CATEGORIES
   const addCatBtn=document.getElementById('addCatBtn');
@@ -1901,10 +2128,61 @@ function migrateState(){
   if(state.settings.dashboardShowBalances===undefined) state.settings.dashboardShowBalances=true;
   if(!state.settings.dashboardAccountId && state.accounts[0]) state.settings.dashboardAccountId=state.accounts[0].id;
   if(!state.stoppedRecurrings) state.stoppedRecurrings=[];
+  if(state.tutorialSeen===undefined) state.tutorialSeen=false;
+  if(!state.merchantMappings) state.merchantMappings={};
   ensureMeta();
   // Il ciclo budget ora è derivato dai movimenti Stipendio, non da un giorno fisso.
 }
 
+
+/* ============ WHATS NEW BANNER ============ */
+function showWhatsNew(){
+  const el=document.createElement('div');
+  el.id='whatsNewBanner';
+  el.innerHTML=`<span class="wn-text">🆕 ${WHATS_NEW}</span><button class="wn-close" aria-label="Chiudi">✕</button>`;
+  document.body.appendChild(el);
+  el.querySelector('.wn-close').addEventListener('click',()=>el.remove());
+  const t=setTimeout(()=>el.remove(),10000);
+  el.querySelector('.wn-close').addEventListener('click',()=>clearTimeout(t));
+}
+
+/* ============ TUTORIAL MODAL ============ */
+function openTutorialModal(step=0){
+  const s=TUTORIAL_STEPS[step];
+  const total=TUTORIAL_STEPS.length;
+  const isLast=step===total-1;
+  const isFirst=step===0;
+  document.getElementById('modalRoot').innerHTML=`
+  <div class="modal-bg" id="tutBg">
+    <div class="modal" style="max-width:460px">
+      <button class="close-x" id="tutClose">✕</button>
+      <div style="text-align:center;font-size:2.4rem;margin-bottom:8px">${s.icon}</div>
+      <h3 style="text-align:center;margin-bottom:4px">${s.title}</h3>
+      <div style="text-align:center;font-size:12px;color:var(--muted,#8a9a94);margin-bottom:16px">Passo ${step+1} di ${total}</div>
+      <div style="font-size:14px;line-height:1.6;color:var(--text,#e0ede8);margin-bottom:20px">${s.text}</div>
+      <div class="modal-actions" style="justify-content:space-between;align-items:center">
+        <button class="btn ghost small" id="tutSkip" style="font-size:12px;opacity:0.7">Salta tutorial</button>
+        <div style="display:flex;gap:8px">
+          ${!isFirst?`<button class="btn ghost" id="tutBack">← Indietro</button>`:''}
+          ${isLast
+            ?`<button class="btn" id="tutFinish">Inizia dai Conti →</button>`
+            :`<button class="btn" id="tutNext">Avanti →</button>`}
+        </div>
+      </div>
+    </div>
+  </div>`;
+  document.getElementById('tutBg').addEventListener('click',e=>{ if(e.target.id==='tutBg') closeTutorial(); });
+  document.getElementById('tutClose').addEventListener('click',closeTutorial);
+  document.getElementById('tutSkip').addEventListener('click',closeTutorial);
+  if(!isFirst) document.getElementById('tutBack').addEventListener('click',()=>openTutorialModal(step-1));
+  if(isLast) document.getElementById('tutFinish').addEventListener('click',()=>{ closeTutorial(); setPage('accounts'); });
+  else document.getElementById('tutNext').addEventListener('click',()=>openTutorialModal(step+1));
+}
+function closeTutorial(){
+  state.tutorialSeen=true;
+  touchState(); saveState();
+  closeModal();
+}
 
 /* ============ PWA SERVICE WORKER ============ */
 (function registerPwa(){
@@ -1919,8 +2197,20 @@ function migrateState(){
 (async function init(){
   await initCloud();
   const had=await loadState();
-  if(!had){ migrateState(); state.transactions=seedTransactions(); saveState(); } else { migrateState(); saveState(); }
+  let showNew=false;
+  if(!had){
+    migrateState(); state.transactions=seedTransactions();
+    state._meta.lastSeenVersion=APP_VERSION; // nuovo utente: niente banner
+    saveState();
+  } else {
+    migrateState();
+    showNew=state._meta.lastSeenVersion!==APP_VERSION;
+    state._meta.lastSeenVersion=APP_VERSION;
+    saveState();
+  }
   setPage('dashboard');
+  if(!state.tutorialSeen) openTutorialModal(0);
+  if(showNew) showWhatsNew();
   window.addEventListener('focus',()=>{ if(cloud.client&&cloud.user) syncCloudNow(); });
   setInterval(()=>{ if(cloud.client&&cloud.user) syncCloudNow(); }, 60000);
 })();
