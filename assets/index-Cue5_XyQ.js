@@ -257,18 +257,62 @@
     <div class="tx-list">
       ${e.length===0?`<div class="empty">Nessun movimento${e_||t_?` per i filtri selezionati`:``}.</div>`:e.map(e=>i_(e,!0)).join(``)}
     </div>
-  </div>`}function p_(){let e=jh(),t=mg(Oh(e.bounds));return`
+  </div>`}function p_(){let e=jh(),t=Oh(e.bounds),n=mg(t);t.filter(e=>_(e)&&e.category&&e.category!==`Stipendio`).forEach(e=>{n[e.category]=(n[e.category]||0)+e.amount});let r=Object.values(J.budgets).reduce((e,t)=>e+(parseFloat(t)||0),0),i=lh().filter(e=>e!==`Stipendio`).reduce((e,t)=>e+(n[t]||0),0),a=Og(5,0,e.year,e.month,`all`).map(e=>{let[t,n]=e.key.split(`-`).map(Number);return pg(t,n-1).filter(_h).reduce((e,t)=>e+t.amount,0)}).filter(e=>e>0),o=a.length?a.reduce((e,t)=>e+t)/a.length:0,c=Ag().filter(e=>e.isSaving).reduce((e,t)=>e+jg(t.amount,t.freq),0),l=o-r-c,u=r-i,d=r>0?Math.min(100,i/r*100):0;return`
   <div class="topbar"><h1>Budget</h1><div class="month-switch"><div class="label" title="Ciclo corrente basato sullo stipendio più recente">${Eh(e.bounds)}</div></div></div>
+
+  <div class="card" style="margin-bottom:16px;">
+    <h3>Riepilogo allocazione</h3>
+    <div class="budget-kpi-grid">
+      <div class="budget-kpi">
+        <div class="bk-label">Stipendio medio</div>
+        <div class="bk-value num pos">${s(o)}</div>
+        <div class="bk-sub">media ultimi cicli</div>
+      </div>
+      <div class="budget-kpi">
+        <div class="bk-label">Budget allocato</div>
+        <div class="bk-value num">${s(r)}</div>
+        <div class="bk-sub">${lh().filter(e=>e!==`Stipendio`&&(J.budgets[e]||0)>0).length} categorie con budget</div>
+      </div>
+      <div class="budget-kpi">
+        <div class="bk-label">Risparmi programmati</div>
+        <div class="bk-value num" style="color:var(--sage)">${s(c)}</div>
+        <div class="bk-sub">trasferimenti ricorrenti</div>
+      </div>
+      <div class="budget-kpi ${l<0?`bk-warn`:``}">
+        <div class="bk-label">Non allocato</div>
+        <div class="bk-value num ${l>=0?`pos`:`neg`}">${s(Math.abs(l))}</div>
+        <div class="bk-sub">${l>=0?`liquidità fuori budget`:`attenzione: over-allocato`}</div>
+      </div>
+    </div>
+    <div class="budget-kpi-grid" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line)">
+      <div class="budget-kpi">
+        <div class="bk-label">Speso nel ciclo</div>
+        <div class="bk-value num neg">${s(i)}</div>
+        <div class="bk-sub">su tutte le categorie</div>
+      </div>
+      <div class="budget-kpi">
+        <div class="bk-label">Budget residuo</div>
+        <div class="bk-value num ${u>=0?`pos`:`neg`}">${s(Math.abs(u))}</div>
+        <div class="bk-sub">${u>=0?`ancora disponibile`:`fuori budget totale`}</div>
+      </div>
+      <div class="budget-kpi" style="grid-column:span 2">
+        <div class="bk-label">Utilizzo budget complessivo — ${d.toFixed(0)}%</div>
+        <div class="catbar-track" style="margin-top:6px"><div class="catbar-fill" style="width:${d}%;background:${d>=100?`var(--coral)`:d>=80?`var(--amber)`:`var(--sage)`}"></div></div>
+        <div class="bk-sub" style="margin-top:4px">${s(i)} spesi su ${s(r)} pianificati</div>
+      </div>
+    </div>
+  </div>
+
   <div class="card" style="margin-bottom:16px;">
     <h3>Ciclo budget dinamico</h3>
-    <div class="empty" style="text-align:left;padding:0;">Il budget viene calcolato automaticamente dalla data dello <strong>Stipendio più recente registrato</strong> fino al giorno prima dello stipendio successivo. Ciclo corrente: <strong>${Eh(e.bounds)}</strong>. Se non esiste ancora nessuno stipendio registrato, l'app usa temporaneamente il mese selezionato.</div>
+    <div class="empty" style="text-align:left;padding:0;">Il budget viene calcolato dalla data dello <strong>Stipendio più recente</strong> fino al giorno prima del successivo. Ciclo corrente: <strong>${Eh(e.bounds)}</strong>.</div>
   </div>
   ${Hg(e.year,e.month)}
   <div class="card budget-table">
-    ${lh().filter(e=>e!==`Stipendio`).map(e=>{let n=t[e]||0,r=J.budgets[e]||0,i=r>0?Math.min(100,n/r*100):0,a=r>0&&n>r,o=a||i>=90?`var(--coral)`:i>=75?`var(--amber)`:i>=50?`var(--gold)`:`var(--sage)`,c=``;return r>0&&(i>=100?c=`<span class="budget-badge b100">🚨 100%</span>`:i>=90?c=`<span class="budget-badge b90">⚠️ ${i.toFixed(0)}%</span>`:i>=75?c=`<span class="budget-badge b75">💛 ${i.toFixed(0)}%</span>`:i>=50&&(c=`<span class="budget-badge b50">💛 ${i.toFixed(0)}%</span>`)),`<div class="cat-row">
+    ${lh().filter(e=>e!==`Stipendio`).map(e=>{let t=n[e]||0,r=J.budgets[e]||0,i=r>0?Math.min(100,t/r*100):0,a=r>0&&t>r,o=a||i>=90?`var(--coral)`:i>=75?`var(--amber)`:i>=50?`var(--gold)`:`var(--sage)`,c=``;return r>0&&(i>=100?c=`<span class="budget-badge b100">🚨 100%</span>`:i>=90?c=`<span class="budget-badge b90">⚠️ ${i.toFixed(0)}%</span>`:i>=75?c=`<span class="budget-badge b75">💛 ${i.toFixed(0)}%</span>`:i>=50&&(c=`<span class="budget-badge b50">💛 ${i.toFixed(0)}%</span>`)),`<div class="cat-row">
         <div class="cat-info"><span>${sh(e)}</span> ${e}${c}</div>
         <div class="bar-area"><div class="catbar-track"><div class="catbar-fill" style="width:${i}%;background:${o}"></div></div></div>
-        <div class="nums"><span style="color:${a?`var(--coral)`:`var(--cream)`}">${s(n)}</span> / <input class="budget-input" data-budget="${e}" type="number" min="0" step="10" value="${r}"></div>
+        <div class="nums"><span style="color:${a?`var(--coral)`:`var(--cream)`}">${s(t)}</span> / <input class="budget-input" data-budget="${e}" type="number" min="0" step="10" value="${r}"></div>
       </div>`}).join(``)}
   </div>`}function m_(){return`
   <div class="topbar"><h1>Obiettivi di risparmio</h1><button class="btn small" id="addGoalBtn">+ Nuovo obiettivo</button></div>
