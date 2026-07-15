@@ -44,3 +44,40 @@ Richieste aggiornamenti app:
     Estensibilità: aggiungere nuove banche con entry { id, label, accept, parse } in src/bankImport.js.
     Bottone "+ Richiedila" nel wizard per richiedere nuovi formati via email con file esempio.
     ↳ v22.8 (15/07/2026): aggiunto formato IsyBank (CSV + XLSX) con auto-mapping categorie banca.
+
+11 - Alert budget via mail/notifica:
+    Avvisare l'utente quando una categoria di spesa supera l'80% (warning) o il 100% (superato)
+    del budget mensile impostato. Possibili approcci:
+    A) Mail automatica: estendere la Edge Function send-report con un controllo giornaliero
+       via pg_cron — se una categoria supera la soglia, invia mail con riepilogo.
+    B) Alert in-app: banner/toast visibile all'apertura dell'app quando il budget è in rosso
+       (già fattibile lato frontend senza backend aggiuntivo).
+    Approccio suggerito: B per partenza rapida (zero infrastruttura), A come upgrade successivo.
+
+12 - Vista abbonamenti dedicata:
+    Una sezione separata (o tab nella pagina Movimenti/Dashboard) che aggrega tutte le spese
+    ricorrenti e mostra: nome esercente, importo, frequenza, prossima scadenza, costo annuale
+    equivalente. In fondo: totale abbonamenti attivi/anno. Tasto rapido per fermare/riattivare.
+    Approccio: filtro sulle transazioni con recurring=true, già presenti nello state.
+    Nessuna modifica al modello dati — solo nuova UI. Bassa complessità.
+
+13 - Confronto mese su mese / anno su anno:
+    Nella pagina Analytics, aggiungere una vista comparativa: per ogni categoria, spesa del
+    mese corrente vs mese precedente con variazione % e freccia su/giù. Totale generale a
+    confronto in cima. Opzionale: toggle per confrontare con stesso mese anno precedente.
+    Approccio: calcolo lato frontend sui dati già presenti. Nessuna modifica al backend.
+
+14 - Calendario finanziario:
+    Vista mensile a griglia (tipo calendario) che mostra le uscite/entrate previste per ogni
+    giorno del mese: stipendio atteso, spese ricorrenti prossime scadenze, eventuali obiettivi
+    di risparmio. Utile per pianificazione settimanale.
+    Approccio: nuova pagina/tab che legge recurringNextDate dalle transazioni ricorrenti
+    attive e le posiziona sui giorni corretti del mese visualizzato. Frontend only.
+
+15 - Scan ricevuta con OCR:
+    Nella schermata di aggiunta movimento, bottone "📷 Scansiona scontrino" che apre la
+    fotocamera (o seleziona immagine), estrae importo/data/esercente via OCR e precompila
+    il form. L'utente verifica e conferma.
+    Approccio suggerito: Tesseract.js (OCR browser-side, no API key, ~4MB bundle) per
+    partenza semplice. Upgrade futuro: Google Cloud Vision API per maggiore accuratezza.
+    Nota: è la feature più complessa del backlog — valutare dopo le altre.
