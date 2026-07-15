@@ -465,13 +465,10 @@ grant execute on function public.get_libretto_state() to authenticated;`)}</div>
       <button class="close-x" id="biClose">✕</button>
       <h3>🏦 Importa da homebanking</h3>
       <p style="font-size:13px;color:var(--cream-dim);margin:0 0 18px">Carica il file CSV scaricato dalla tua banca per importare i movimenti in blocco, con rilevamento automatico dei duplicati.</p>
-      <div class="field">
-        <label>Formato banca</label>
-        <select id="biFormat">${e}</select>
-        <div style="margin-top:6px;font-size:12px;color:var(--cream-dim)">
-          La tua banca non è in lista?
-          <a id="biRequestFmt" href="#" style="color:var(--gold);text-decoration:underline">Richiedila →</a>
-        </div>
+      <div class="field"><label>Formato banca</label><select id="biFormat">${e}</select></div>
+      <div style="margin:-8px 0 14px;font-size:12px;color:var(--cream-dim)">
+        La tua banca non è in lista?
+        <button id="biRequestFmt" class="btn ghost small" style="font-size:12px;padding:3px 10px;display:inline-block">+ Richiedila</button>
       </div>
       <div class="field"><label>Conto di destinazione</label><select id="biAccount">${t}</select></div>
       <div class="field"><label>File banca</label><input type="file" id="biFile" accept=".csv,.xlsx,.xls,text/csv" style="color:var(--cream)"></div>
@@ -480,7 +477,7 @@ grant execute on function public.get_libretto_state() to authenticated;`)}</div>
         <button class="btn" id="biNext1" disabled>Analizza →</button>
       </div>
     </div>
-  </div>`,document.getElementById(`bankImportBg`).addEventListener(`click`,e=>{e.target.id===`bankImportBg`&&Q()}),document.getElementById(`biClose`).addEventListener(`click`,Q),document.getElementById(`biCancel`).addEventListener(`click`,Q),document.getElementById(`biRequestFmt`).addEventListener(`click`,e=>{e.preventDefault(),window.open(`mailto:${Fg}?subject=%5BLibretto%5D%20Richiesta%20nuovo%20formato%20banca&body=Ciao%2C%0A%0Avorrei%20richiedere%20il%20supporto%20per%20importare%20i%20movimenti%20dalla%20mia%20banca.%0A%0ANome%20banca%3A%20%5Binserisci%20nome%5D%0AFormato%20file%3A%20%5B%20%5D%20CSV%20%20%5B%20%5D%20Excel%20(.xlsx)%0A%0AIn%20allegato%20trovi%20un%20file%20di%20esempio%20anonimizzato%20(ho%20sostituito%20le%20descrizioni%20sensibili%20con%20testo%20generico%20e%20ho%20lasciato%20solo%20la%20struttura%20delle%20colonne).%0A%0AGrazie!`,`_blank`)});let n=document.getElementById(`biFile`),r=document.getElementById(`biNext1`);n.addEventListener(`change`,()=>{r.disabled=!n.files.length}),r.addEventListener(`click`,()=>{let e=n.files[0],t=document.getElementById(`biFormat`).value,r=document.getElementById(`biAccount`).value;if(!e||!t||!r)return;let i=new FileReader;i.onload=()=>C_(t,r,i.result),/\.(xlsx|xls)$/i.test(e.name)?i.readAsArrayBuffer(e):i.readAsText(e)})}function C_(e,t,n){let{rows:r,errors:a}=eh(e,n);if(a.length){document.getElementById(`modalRoot`).innerHTML=`
+  </div>`,document.getElementById(`bankImportBg`).addEventListener(`click`,e=>{e.target.id===`bankImportBg`&&Q()}),document.getElementById(`biClose`).addEventListener(`click`,Q),document.getElementById(`biCancel`).addEventListener(`click`,Q),document.getElementById(`biRequestFmt`).addEventListener(`click`,e=>{e.preventDefault(),e.stopPropagation(),window.open(`mailto:${Fg}?subject=%5BLibretto%5D%20Richiesta%20nuovo%20formato%20banca&body=Ciao%2C%0A%0Avorrei%20richiedere%20il%20supporto%20per%20importare%20i%20movimenti%20dalla%20mia%20banca.%0A%0ANome%20banca%3A%20%5Binserisci%20nome%5D%0AFormato%20file%3A%20%5B%20%5D%20CSV%20%20%5B%20%5D%20Excel%20(.xlsx)%0A%0AIn%20allegato%20trovi%20un%20file%20di%20esempio%20anonimizzato%20(ho%20sostituito%20le%20descrizioni%20sensibili%20con%20testo%20generico%20e%20ho%20lasciato%20solo%20la%20struttura%20delle%20colonne).%0A%0AGrazie!`,`_blank`)});let n=document.getElementById(`biFile`),r=document.getElementById(`biNext1`);n.addEventListener(`change`,()=>{r.disabled=!n.files.length}),r.addEventListener(`click`,()=>{let e=n.files[0],t=document.getElementById(`biFormat`).value,r=document.getElementById(`biAccount`).value;if(!e||!t||!r)return;let i=new FileReader;i.onload=()=>C_(t,r,i.result),/\.(xlsx|xls)$/i.test(e.name)?i.readAsArrayBuffer(e):i.readAsText(e)})}function C_(e,t,n){let{rows:r,errors:a}=eh(e,n);if(a.length){document.getElementById(`modalRoot`).innerHTML=`
     <div class="modal-bg" id="bankImportBg">
       <div class="modal" style="max-width:480px">
         <button class="close-x" id="biClose">✕</button>
