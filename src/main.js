@@ -1403,9 +1403,10 @@ function renderTravel(){
     <div class="card">
       <h3>Inizia un nuovo viaggio</h3>
       <p style="font-size:13px;color:var(--cream-dim);margin-bottom:20px;">Le spese del viaggio non impattano Budget e Analisi, e vengono collassate in "Viaggi" alla fine.</p>
+      <div class="field"><label>Nome del viaggio</label><input type="text" id="travelName" placeholder="es. Barcellona 2026, Weekend Roma…"></div>
       <div class="frow">
-        <div class="field" style="flex:2"><label>Nome del viaggio</label><input type="text" id="travelName" placeholder="es. Barcellona 2026, Weekend Roma…"></div>
         <div class="field"><label>Data inizio</label><input type="date" id="travelStart" value="${isoToday()}"></div>
+        <div class="field"><label>Budget totale (€)</label><input type="number" id="travelBudgetTotal" step="1" min="0" placeholder="—" value="${escapeHTML(String(travel?.totalBudget||''))}"></div>
       </div>
       <div class="travel-budget-section">
         <div class="travel-budget-header">Budget per categoria <span style="font-size:11px;opacity:.6">(opzionale — lascia vuoto per non usarlo)</span></div>
@@ -1418,7 +1419,7 @@ function renderTravel(){
   const spentByCat=travelSpentByCat();
   const totalSpent=travelTotalSpent();
   const budgets=travel.categoryBudgets||{};
-  const totalBudget=Object.values(budgets).reduce((s,v)=>s+(parseFloat(v)||0),0);
+  const totalBudget=parseFloat(travel.totalBudget)||0;
   const txList=travelTxs().filter(t=>t.type==='out'&&!isTransfer(t)).sort((a,b)=>b.date.localeCompare(a.date));
   const catRows=Object.entries(spentByCat).sort(([,a],[,b])=>b-a).map(([cat,spent])=>{
     const bud=parseFloat(budgets[cat]||0);
@@ -1429,18 +1430,29 @@ function renderTravel(){
       ${bud>0?`<div class="catbar-track"><div class="catbar-fill" style="width:${pct.toFixed(0)}%;background:${col}"></div></div>`:''}</div>`;
   }).join('');
   const txRows=txList.slice(0,25).map(t=>`<div class="rec-item"><div><div class="nm">${catIcon(t.category)} ${escapeHTML(t.payee||'—')}</div><div class="freq">${t.date} · ${t.category}</div></div><div class="num neg">-${fmtEUR(t.amount)}</div></div>`).join('');
-  const budKpi=totalBudget>0?`<div class="mini-kpi"><div class="mlabel">Budget totale</div><div class="mvalue num ${totalSpent>totalBudget?'neg':'pos'}">${fmtEUR(totalBudget-totalSpent)} ${totalSpent>totalBudget?'sforato':'rimasto'}</div><div class="sync-note">${fmtEUR(totalSpent)} / ${fmtEUR(totalBudget)}</div></div>`:'';
+  // Budget totale progress bar
+  const budPct=totalBudget>0?Math.min(100,(totalSpent/totalBudget)*100):0;
+  const budCol=budPct>100?'var(--coral)':budPct>80?'#e0975c':'var(--sage)';
+  const remaining=totalBudget-totalSpent;
+  const budCard=totalBudget>0?`
+  <div class="card" style="margin-bottom:16px;">
+    <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;">
+      <div style="font-size:13px;font-weight:600;">Budget totale viaggio</div>
+      <div style="font-size:12px;color:var(--cream-dim);">${fmtEUR(totalSpent)} / <span class="num">${fmtEUR(totalBudget)}</span></div>
+    </div>
+    <div class="catbar-track" style="height:10px;border-radius:6px;">
+      <div class="catbar-fill" style="width:${budPct.toFixed(1)}%;background:${budCol};border-radius:6px;height:10px;"></div>
+    </div>
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-top:8px;">
+      <div style="font-size:12px;color:${budCol};font-weight:600;">${budPct.toFixed(0)}% utilizzato</div>
+      <div class="num" style="font-size:15px;font-weight:700;color:${remaining>=0?'var(--sage)':'var(--coral)'};">${remaining>=0?fmtEUR(remaining)+' rimasti':'−'+fmtEUR(Math.abs(remaining))+' sforato'}</div>
+    </div>
+  </div>`:
+  `<div class="mini-grid" style="margin-bottom:16px;"><div class="mini-kpi"><div class="mlabel">Speso finora</div><div class="mvalue num neg">${fmtEUR(totalSpent)}</div><div class="sync-note">${txList.length} moviment${txList.length===1?'o':'i'}</div></div></div>`;
   return `
   <div class="topbar"><h1>✈️ ${escapeHTML(travel.name)}</h1><div class="month-switch"><div class="label">Giorno ${days}</div></div></div>
-  <div class="alert-banner" style="margin-bottom:16px;background:rgba(95,179,201,.1);border-color:rgba(95,179,201,.35);">
-    <div class="aicon">✈️</div>
-    <div class="abody"><div class="atitle">Viaggio in corso · dal ${travel.startDate}</div>
-    <div class="adesc">Spese registrate solo nel viaggio — escluse da Budget e Analisi. Alla fine verranno collassate in "Viaggi".</div></div>
-  </div>
-  <div class="mini-grid" style="margin-bottom:16px;">
-    <div class="mini-kpi"><div class="mlabel">Speso finora</div><div class="mvalue num neg">${fmtEUR(totalSpent)}</div><div class="sync-note">${txList.length} moviment${txList.length===1?'o':'i'}</div></div>
-    ${budKpi}
-  </div>
+  ${budCard}
+  ${totalBudget>0?`<div class="mini-grid" style="margin-bottom:16px;"><div class="mini-kpi"><div class="mlabel">Speso finora</div><div class="mvalue num neg">${fmtEUR(totalSpent)}</div><div class="sync-note">${txList.length} moviment${txList.length===1?'o':'i'}</div></div></div>`:''}
   ${catRows?`<div class="card" style="margin-bottom:16px;"><h3>Spese per categoria</h3>${catRows}</div>`:''}
   ${txRows?`<div class="card" style="margin-bottom:16px;"><h3>Movimenti</h3>${txRows}${txList.length>25?`<div class="empty" style="padding:8px">+${txList.length-25} altri movimenti</div>`:''}</div>`:'<div class="card" style="margin-bottom:16px;"><div class="empty">Nessuna spesa ancora — aggiungile con il tasto +</div></div>'}
   <div class="card" style="border-color:rgba(226,114,91,.3);">
@@ -2085,9 +2097,10 @@ function bindPageEvents(){
     const name=(document.getElementById('travelName')?.value||'').trim();
     const startDate=document.getElementById('travelStart')?.value||isoToday();
     if(!name){ toast('Inserisci il nome del viaggio'); return; }
+    const totalBudget=parseFloat(document.getElementById('travelBudgetTotal')?.value)||0;
     const categoryBudgets={};
     document.querySelectorAll('.travel-budget-input').forEach(inp=>{ const v=parseFloat(inp.value); if(v>0) categoryBudgets[inp.dataset.cat]=v; });
-    state.travel={active:true,name,startDate,endDate:null,categoryBudgets};
+    state.travel={active:true,name,startDate,endDate:null,totalBudget:totalBudget||null,categoryBudgets};
     saveState(); render(); toast(`Viaggio "${name}" iniziato! Le spese vengono ora tracciate separatamente.`);
   });
   const terminateTravelBtn=document.getElementById('terminateTravelBtn');
