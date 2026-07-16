@@ -1,3 +1,27 @@
+16/07/2026 — Sessione 12c: Reminder nel calendario (v22.12) — LIVE ✅
+SAL:
+- state.reminders[] — array separato da transactions (automaticamente escluso da tutti i calcoli)
+  Struttura: {id, date, payee, category, amount, note}
+  migrateState: guard `if(!state.reminders) state.reminders=[]`
+- openReminderModal(dateStr): form semplificato (importo, data, descrizione, categoria, nota)
+- openReminderActionModal(reminderId): popup su click reminder
+  - "Registra come spesa": apre openTransactionModal pre-compilato; al salvataggio rimuove il reminder
+  - "Elimina reminder": rimuove da state.reminders
+- openTransactionModal: aggiunto parametro `prefill` (usato da conversione reminder)
+  - src = existing || prefill || {} — backward compatible, tutti i caller esistenti invariati
+- pendingReminderConvert: variabile modulo per tracciare la conversione; resettata dopo il salvataggio
+- renderCalendar(): aggiornato con:
+  - remByDay: reminder raggruppati per giorno del mese
+  - cal-ev-reminder (viola tratteggiato) / cal-ev-reminder-overdue (rosso tratteggiato)
+  - Tooltip su ogni reminder con payee + nota
+  - Totale giornaliero include anche importi reminder
+  - Max 2 ricorrenti visibili se ci sono reminder (slot per entrambi)
+  - Banner alert se ci sono reminder scaduti (data < oggi)
+  - Pulsante "+ Reminder" nel topbar
+- bindPageEvents: handler addReminderBtn + click delegation su [data-reminder-id]
+- CSS: .cal-ev-reminder, .cal-ev-reminder:hover, .cal-ev-reminder-overdue, .cal-ev-reminder-overdue:hover
+- APP_VERSION: 22.12-reminders
+
 16/07/2026 — Sessione 12b: Fix dashboard filtro conto (v22.11) — LIVE ✅
 SAL:
 - Bug fix: selectedDashboardAccountId() non gestiva il valore 'all' → selezionando "Tutti i conti"

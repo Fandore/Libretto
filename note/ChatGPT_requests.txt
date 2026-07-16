@@ -13,10 +13,14 @@ Richieste aggiornamenti app:
     Ricevere automaticamente una mail con: totale entrate/uscite del periodo, riepilogo per
     categoria, top 5 spese, stato rispetto al budget.
     Approccio approvato: Supabase Edge Function (TypeScript) + pg_cron per lo scheduling
-    (ogni lunedì per il settimanale, primo del mese per il mensile) + Resend come provider
-    email (free tier, 3.000 mail/mese). La Edge Function legge i dati dal DB Supabase,
-    calcola i totali e invia la mail formattata in HTML all'utente registrato.
-    Prerequisiti: account Resend, API key, verifica dominio mittente.
+    (ogni lunedì per il settimanale, primo del mese per il mensile) + Brevo come provider email.
+    La Edge Function legge i dati dal DB Supabase, calcola i totali e invia la mail formattata
+    in HTML all'utente registrato.
+    ↳ 15/07/2026 (v22.10): aggiunta Edge Function send-monthly-reminder (07:00 UTC ogni 1° del mese)
+       che invia promemoria con scadenze ricorrenti del mese: giorno/importo/categoria di ogni uscita
+       fissa e risparmio programmato, più riepilogo stipendio atteso / uscite fisse / risparmi /
+       disponibile netto. Job pg_cron: libretto-monthly-reminder. Deploy: supabase functions deploy
+       send-monthly-reminder + eseguire il nuovo select cron.schedule in cron_setup.sql.
 
 7 ✅ IMPLEMENTATO 13/07/2026 (v22.5) - Importi ricorrenti variabili: per spese come bollette (luce, gas) che variano ogni mese,
     usare la media degli ultimi 3 importi registrati invece di un valore fisso nelle proiezioni cashflow.
@@ -54,20 +58,20 @@ Richieste aggiornamenti app:
        (già fattibile lato frontend senza backend aggiuntivo).
     Approccio suggerito: B per partenza rapida (zero infrastruttura), A come upgrade successivo.
 
-12 - Vista abbonamenti dedicata:
+12 ✅ IMPLEMENTATO 15/07/2026 (v22.9) - Vista abbonamenti dedicata:
     Una sezione separata (o tab nella pagina Movimenti/Dashboard) che aggrega tutte le spese
     ricorrenti e mostra: nome esercente, importo, frequenza, prossima scadenza, costo annuale
     equivalente. In fondo: totale abbonamenti attivi/anno. Tasto rapido per fermare/riattivare.
     Approccio: filtro sulle transazioni con recurring=true, già presenti nello state.
     Nessuna modifica al modello dati — solo nuova UI. Bassa complessità.
 
-13 - Confronto mese su mese / anno su anno:
+13 ✅ IMPLEMENTATO 15/07/2026 (v22.9) - Confronto mese su mese / anno su anno:
     Nella pagina Analytics, aggiungere una vista comparativa: per ogni categoria, spesa del
     mese corrente vs mese precedente con variazione % e freccia su/giù. Totale generale a
     confronto in cima. Opzionale: toggle per confrontare con stesso mese anno precedente.
     Approccio: calcolo lato frontend sui dati già presenti. Nessuna modifica al backend.
 
-14 - Calendario finanziario:
+14 ✅ IMPLEMENTATO 15/07/2026 (v22.9) - Calendario finanziario:
     Vista mensile a griglia (tipo calendario) che mostra le uscite/entrate previste per ogni
     giorno del mese: stipendio atteso, spese ricorrenti prossime scadenze, eventuali obiettivi
     di risparmio. Utile per pianificazione settimanale.
@@ -81,3 +85,72 @@ Richieste aggiornamenti app:
     Approccio suggerito: Tesseract.js (OCR browser-side, no API key, ~4MB bundle) per
     partenza semplice. Upgrade futuro: Google Cloud Vision API per maggiore accuratezza.
     Nota: è la feature più complessa del backlog — valutare dopo le altre.
+
+
+23 - Spese pianificate (reminder) + mail domenicale:
+    Nel calendario, possibilità di aggiungere spese future come "reminder" (isReminder:true)
+    che non impattano saldi, budget o analisi. Visibili nel calendario con stile distinto
+    (bordo tratteggiato). Quando la data scade: prompt per convertire in transazione reale o eliminare.
+    Mail domenicale (type:'weekly-preview' in send-report): ogni domenica lista reminder + ricorrenti
+    in scadenza nei 7 giorni successivi. Cron: 0 7 * * 0.
+    Complessità: medio-bassa.
+
+24 - Modalità Viaggio:
+    Stato state.travel { active, name, startDate, endDate, categoryBudgets:{cat:importo} }.
+    Le transazioni durante il viaggio ricevono travelTag:true → escluse da budget e analisi normali.
+    Nuova pagina ✈️ Viaggio: barre avanzamento per categoria + Saldo Budget Viaggio rimanente.
+    Banner persistente quando viaggio attivo. Un solo viaggio alla volta.
+    Fine viaggio: tutte le tx travelTag:true vengono sostituite da una singola tx "Viaggi" per
+    il totale (saldo netto invariato) + mail riepilogativa con breakdown per categoria.
+    Saldi aggiornati normalmente durante il viaggio. Ricorrenti e spese normali non influenzate.
+    Complessità: alta.
+
+--- SUGGERIMENTI CLAUDE (non ancora approvati) ---
+
+16 - Tracciamento debiti e rate:
+    Sezione dedicata a prestiti, mutuo, leasing. Per ogni debito: importo totale, rata mensile,
+    durata, saldo residuo calcolato, % rimborsata con barra. Le rate appaiono automaticamente
+    come spese ricorrenti nelle proiezioni cashflow.
+    Approccio: nuovo array state.debts con campi {id, name, totalAmount, installment,
+    startDate, months, category}. Frontend only, nessun backend. Media complessità.
+
+17 - Note e tag sui movimenti:
+    Aggiungere un campo "Note" libero e un campo "Tag" (array di stringhe) a ogni movimento.
+    Nella pagina Movimenti: filtro per tag, ricerca full-text nelle note. Utile per capire
+    il contesto di una spesa (es. "cena aziendale", "regalo", "emergenza").
+    Approccio: estendere il modello transazione con note e tags. Nessun backend, filtri lato
+    frontend. Bassa complessità, alto valore per utenti con molti movimenti.
+
+18 - Analytics su intervallo date personalizzato:
+    Nella pagina Analisi, aggiungere un selettore "da — a" per analizzare qualsiasi intervallo
+    (es. ultimi 90 giorni, trimestre fiscale, anno solare). Tutti i grafici e le tabelle si
+    adattano all'intervallo selezionato.
+    Approccio: aggiungere due input date nella card "Ambito analisi" già esistente. I valori
+    sostituiscono i bounds del ciclo corrente per tutti i calcoli di quella pagina. Frontend only.
+
+19 - Patrimonio netto nel tempo (Net Worth):
+    Un grafico che mostra la somma di tutti i saldi dei conti nel tempo, settimana per settimana
+    o mese per mese. Permette di vedere se stai crescendo o erodendo il patrimonio nel lungo
+    periodo. In Dashboard o in una sezione Analisi dedicata.
+    Approccio: calcolo retrospettivo saldo-per-data applicando i movimenti in ordine cronologico
+    inverso a partire dal saldo attuale. Frontend only, media complessità.
+
+20 - Budget rollover (riporto a nuovo):
+    Il budget non speso in un ciclo si somma al budget del ciclo successivo (es. risparmio €40
+    su Svago in luglio → budget Svago agosto diventa €140). Opzionale per categoria: si attiva
+    con un toggle nella pagina Budget.
+    Approccio: aggiungere state.budgetRollover{} (flag per categoria) e calcolare il riporto
+    a ogni cambio ciclo. Richiede attenzione alla logica di migrazione stato. Media complessità.
+
+21 - Widget/scorciatoia spesa rapida (Quick Add):
+    Una modale semplificata accessibile con gesto o shortcut (es. doppio tap sul FAB +) che
+    mostra solo: importo, categoria, conto. Niente date, ricorrenze, note. Per inserire una
+    spesa in 3 secondi senza aprire il form completo.
+    Approccio: nuovo modal leggero openQuickAdd() con solo 3 campi, data = oggi, type = 'out'.
+    Frontend only, bassa complessità. Molto utile su mobile.
+
+22 - Ricerca globale movimenti:
+    Una barra di ricerca nella pagina Movimenti (o accessibile da tastiera con Ctrl+K) che
+    filtra in tempo reale per esercente, categoria, nota, importo esatto o range.
+    Approccio: aggiungere un input di ricerca testuale che filtra su tutti i campi del
+    movimento. Frontend only, bassa complessità.

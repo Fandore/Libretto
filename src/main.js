@@ -20,7 +20,8 @@ let state = {
   settings:{salaryDay:27},
   stoppedRecurrings:[],
   tutorialSeen:false,
-  merchantMappings:{}
+  merchantMappings:{},
+  reminders:[]
 };
 
 /* ============ CATEGORY HELPERS ============ */
@@ -209,9 +210,9 @@ function seedTransactions(){
 }
 
 /* ============ PERSISTENCE — STANDALONE BROWSER ============ */
-const APP_VERSION = '22.11-dashboard-fix';
+const APP_VERSION = '22.12-reminders';
 // Aggiorna questo testo ad ogni deploy — viene mostrato una volta agli utenti esistenti.
-const WHATS_NEW = '🔧 Fix dashboard: il filtro <b>Tutti i conti</b> ora funziona correttamente e tutti i widget si aggiornano in base al conto selezionato.';
+const WHATS_NEW = '📌 Novità: <b>Reminder nel calendario</b> — aggiungi spese future come promemoria (non impattano i saldi). Clicca + Reminder nel Calendario.';
 const PRECONFIGURED_SUPABASE_URL = 'https://marvmbewsgxrabirugkk.supabase.co';
 const PRECONFIGURED_SUPABASE_ANON_KEY = 'sb_publishable_Jsd4sX6_6pNCUqHIcun4lA_9F81WlPg';
 const STORAGE_KEY = 'libretto-v2-standalone-state';
@@ -1089,6 +1090,18 @@ function renderCalendar(){
     });
   });
 
+  // Reminders for this month
+  const today2=isoToday();
+  const remByDay={};
+  (state.reminders||[]).filter(r=>{
+    const d=parseISODate(r.date);
+    return d.getFullYear()===year && d.getMonth()===month;
+  }).forEach(r=>{
+    const day=parseISODate(r.date).getDate();
+    if(!remByDay[day]) remByDay[day]=[];
+    remByDay[day].push(r);
+  });
+
   const DAY_NAMES=['Lun','Mar','Mer','Gio','Ven','Sab','Dom'];
   let cells='';
   const totalCells=firstDow+daysInMonth;
@@ -1099,30 +1112,42 @@ function renderCalendar(){
     const isToday=`${year}-${month}-${day}`===todayKey;
     const hasSalary=salaryCells.has(day);
     const exps=expByDay[day]||[];
+    const rems=remByDay[day]||[];
     const dayTotal=exps.reduce((s,f)=>s+f.amount,0);
+    const remTotal=rems.reduce((s,r)=>s+r.amount,0);
+    // slot disponibili per eventi (salario + ricorrenti): mostra max 2 ricorrenti se ci sono reminder
+    const maxExp=rems.length>0?2:3;
     cells+=`<div class="cal-cell${isToday?' cal-today':''}">
       <div class="cal-day-num${hasSalary?' cal-salary-num':''}">${day}</div>
       ${hasSalary?`<div class="cal-event cal-ev-salary">💰 Stipendio</div>`:''}
-      ${exps.slice(0,3).map(f=>`<div class="cal-event cal-ev-exp" title="${escapeHTML(f.payee)}">${catIcon(f.category)} ${escapeHTML(f.payee.length>10?f.payee.slice(0,9)+'…':f.payee)}</div>`).join('')}
-      ${exps.length>3?`<div class="cal-event cal-ev-more">+${exps.length-3} altro</div>`:''}
-      ${dayTotal>0?`<div class="cal-day-total num">−${fmtEUR(dayTotal)}</div>`:''}
+      ${exps.slice(0,maxExp).map(f=>`<div class="cal-event cal-ev-exp" title="${escapeHTML(f.payee)}">${catIcon(f.category)} ${escapeHTML(f.payee.length>10?f.payee.slice(0,9)+'…':f.payee)}</div>`).join('')}
+      ${exps.length>maxExp?`<div class="cal-event cal-ev-more">+${exps.length-maxExp} altro</div>`:''}
+      ${rems.map(r=>`<div class="cal-event ${r.date<today2?'cal-ev-reminder-overdue':'cal-ev-reminder'}" data-reminder-id="${r.id}" title="${escapeHTML(r.payee)}${r.note?' — '+escapeHTML(r.note):''}">📌 ${escapeHTML(r.payee.length>9?r.payee.slice(0,8)+'…':r.payee)}</div>`).join('')}
+      ${(dayTotal+remTotal)>0?`<div class="cal-day-total num">−${fmtEUR(dayTotal+remTotal)}</div>`:''}
     </div>`;
   }
+
+  const overdueCount=(state.reminders||[]).filter(r=>r.date<today2).length;
 
   return `
   <div class="topbar">
     <h1>Calendario finanziario</h1>
+    <div class="topbar-actions">
+      <button class="btn small" id="addReminderBtn">+ Reminder</button>
+    </div>
     <div class="month-switch">
       <button id="calPrev">‹</button>
       <div class="label">${monthName.charAt(0).toUpperCase()+monthName.slice(1)}</div>
       <button id="calNext">›</button>
     </div>
   </div>
+  ${overdueCount>0?`<div class="alert-banner warn" style="margin-bottom:12px;"><div class="aicon">📌</div><div class="abody"><div class="atitle">${overdueCount} reminder scadut${overdueCount===1?'o':'i'}</div><div class="adesc">Hai reminder passati da registrare o eliminare.</div></div></div>`:''}
   <div class="card">
     <div class="cal-legend">
       <span class="cal-ev-salary cal-ev-sample">💰 Stipendio</span>
-      <span class="cal-ev-exp cal-ev-sample">🔸 Spesa ricorrente</span>
-      <span style="color:var(--cream-dim);font-size:12px">Le date provengono da <b>ricorrenti attive</b> e stipendio registrato.</span>
+      <span class="cal-ev-exp cal-ev-sample">🔸 Ricorrente</span>
+      <span class="cal-ev-reminder cal-ev-sample">📌 Reminder</span>
+      <span style="color:var(--cream-dim);font-size:12px">Clicca un reminder per registrarlo o eliminarlo.</span>
     </div>
     <div class="cal-grid">
       ${DAY_NAMES.map(d=>`<div class="cal-head">${d}</div>`).join('')}
@@ -1950,6 +1975,9 @@ function bindPageEvents(){
   if(calPrevBtn) calPrevBtn.addEventListener('click',()=>{ calViewMonth--; if(calViewMonth<0){calViewMonth=11;calViewYear--;} render(); });
   const calNextBtn=document.getElementById('calNext');
   if(calNextBtn) calNextBtn.addEventListener('click',()=>{ calViewMonth++; if(calViewMonth>11){calViewMonth=0;calViewYear++;} render(); });
+  const addReminderBtn=document.getElementById('addReminderBtn');
+  if(addReminderBtn) addReminderBtn.addEventListener('click',()=>openReminderModal());
+  document.querySelectorAll('[data-reminder-id]').forEach(el=>el.addEventListener('click',e=>{ e.stopPropagation(); openReminderActionModal(el.dataset.reminderId); }));
 
   // alert dismiss
   document.querySelectorAll('[data-dismiss]').forEach(b=>b.addEventListener('click',()=>dismissAlert(b.dataset.dismiss)));
@@ -2162,6 +2190,87 @@ function toast(msg){ const root=document.getElementById('toastRoot'); const el=d
 /* ============ CLOSE MODAL ============ */
 function closeModal(){ document.getElementById('modalRoot').innerHTML=''; }
 
+let pendingReminderConvert=null;
+let formReminderCategory='';
+
+function openReminderModal(dateStr=null){
+  formReminderCategory=catNames()[0];
+  document.getElementById('modalRoot').innerHTML=`
+  <div class="modal-bg" id="reminderModalBg">
+    <div class="modal">
+      <button class="close-x" id="closeReminderModal">✕</button>
+      <h3>📌 Nuovo reminder</h3>
+      <div class="frow">
+        <div class="field"><label>Importo (€)</label><input type="number" id="rAmount" step="0.01" min="0" placeholder="0,00" autofocus></div>
+        <div class="field"><label>Data</label><input type="date" id="rDate" value="${dateStr||isoToday()}"></div>
+      </div>
+      <div class="field"><label>Descrizione</label><input type="text" id="rPayee" placeholder="es. Dentista, Amazon, Bolletta gas..."></div>
+      <div class="field"><label>Categoria</label>
+        <div class="cat-pick" id="reminderCatPick">${catNames().map(c=>`<div class="cat-chip ${c===formReminderCategory?'active':''}" data-cat="${c}">${catIcon(c)} ${c}</div>`).join('')}</div>
+      </div>
+      <div class="field"><label>Nota (opzionale)</label><input type="text" id="rNote" placeholder="Dettagli..."></div>
+      <div class="modal-actions">
+        <button class="btn ghost" id="cancelReminder">Annulla</button>
+        <button class="btn" id="saveReminder">Aggiungi reminder</button>
+      </div>
+    </div>
+  </div>`;
+  document.getElementById('reminderModalBg').addEventListener('click',e=>{ if(e.target.id==='reminderModalBg') closeModal(); });
+  document.getElementById('closeReminderModal').addEventListener('click',closeModal);
+  document.getElementById('cancelReminder').addEventListener('click',closeModal);
+  document.querySelectorAll('#reminderCatPick .cat-chip').forEach(chip=>chip.addEventListener('click',()=>{
+    formReminderCategory=chip.dataset.cat;
+    document.querySelectorAll('#reminderCatPick .cat-chip').forEach(c=>c.classList.remove('active'));
+    chip.classList.add('active');
+  }));
+  document.getElementById('saveReminder').addEventListener('click',()=>{
+    const amount=parseFloat(document.getElementById('rAmount').value);
+    const date=document.getElementById('rDate').value||isoToday();
+    const payee=document.getElementById('rPayee').value.trim()||'Reminder';
+    const note=document.getElementById('rNote').value.trim();
+    if(!amount||amount<=0){ toast('Inserisci un importo valido'); return; }
+    state.reminders.push({id:uid(),date,payee,category:formReminderCategory,amount,note});
+    saveState(); closeModal(); render(); toast('📌 Reminder aggiunto');
+  });
+}
+
+function openReminderActionModal(reminderId){
+  const r=(state.reminders||[]).find(x=>x.id===reminderId);
+  if(!r) return;
+  const dateStr=parseISODate(r.date).toLocaleDateString('it-IT',{day:'2-digit',month:'short',year:'numeric'});
+  const isOverdue=r.date<isoToday();
+  document.getElementById('modalRoot').innerHTML=`
+  <div class="modal-bg" id="reminderActionBg">
+    <div class="modal" style="max-width:360px">
+      <button class="close-x" id="closeReminderAction">✕</button>
+      <h3>📌 ${escapeHTML(r.payee)}</h3>
+      <div style="margin-bottom:16px;color:var(--cream-dim);font-size:14px;">
+        <div>${catIcon(r.category)} ${escapeHTML(r.category)} · <span class="num">${fmtEUR(r.amount)}</span></div>
+        <div style="margin-top:4px;${isOverdue?'color:var(--coral);font-weight:600;':''}">📅 ${dateStr}${isOverdue?' · Scaduto':''}</div>
+        ${r.note?`<div style="margin-top:6px;font-style:italic;color:var(--cream-dim)">${escapeHTML(r.note)}</div>`:''}
+      </div>
+      <div class="modal-actions" style="flex-direction:column;gap:8px;">
+        <button class="btn" id="convertReminder">📝 Registra come spesa</button>
+        <button class="btn ghost" id="closeReminderActionBtn">Chiudi</button>
+        <button class="btn ghost danger" id="deleteReminder">🗑️ Elimina reminder</button>
+      </div>
+    </div>
+  </div>`;
+  document.getElementById('reminderActionBg').addEventListener('click',e=>{ if(e.target.id==='reminderActionBg') closeModal(); });
+  document.getElementById('closeReminderAction').addEventListener('click',closeModal);
+  document.getElementById('closeReminderActionBtn').addEventListener('click',closeModal);
+  document.getElementById('deleteReminder').addEventListener('click',()=>{
+    state.reminders=(state.reminders||[]).filter(x=>x.id!==reminderId);
+    saveState(); closeModal(); render(); toast('Reminder eliminato');
+  });
+  document.getElementById('convertReminder').addEventListener('click',()=>{
+    closeModal();
+    pendingReminderConvert=reminderId;
+    openTransactionModal(null,{type:'out',date:r.date,payee:r.payee,category:r.category,amount:r.amount});
+  });
+}
+
+
 /* ============ CONFIRM MODAL ============ */
 function openConfirm(title,desc,onConfirm){
   document.getElementById('modalRoot').innerHTML=`
@@ -2187,10 +2296,11 @@ let formType='out'; let formCategory=catNames()[0];
 
 function openAddModal(){ openTransactionModal(null); }
 
-function openTransactionModal(txId=null){
+function openTransactionModal(txId=null,prefill=null){
   const existing=txId?state.transactions.find(t=>t.id===txId):null;
-  formType=existing?existing.type:'out';
-  formCategory=existing?existing.category:catNames()[0];
+  const src=existing||prefill||{};
+  formType=src.type||'out';
+  formCategory=src.category||catNames()[0];
   let isRecurring=!!(existing&&existing.recurring);
   let isTransferFlag=!!(existing&&isTransfer(existing));
   const title=existing?'Modifica movimento':'Nuovo movimento';
@@ -2211,10 +2321,10 @@ function openTransactionModal(txId=null){
         </div>
       </div>
       <div class="frow">
-        <div class="field"><label>Importo (€)</label><input type="number" id="fAmount" step="0.01" min="0" placeholder="0,00" value="${existing?existing.amount:''}" autofocus></div>
-        <div class="field"><label>Data</label><input type="date" id="fDate" value="${existing?existing.date:isoToday()}"></div>
+        <div class="field"><label>Importo (€)</label><input type="number" id="fAmount" step="0.01" min="0" placeholder="0,00" value="${src.amount||''}" autofocus></div>
+        <div class="field"><label>Data</label><input type="date" id="fDate" value="${src.date||isoToday()}"></div>
       </div>
-      <div class="field"><label>Descrizione / Esercente</label><input type="text" id="fPayee" value="${existing?escapeHTML(existing.payee):''}" placeholder="es. Esselunga, Affitto, Netflix..."></div>
+      <div class="field"><label>Descrizione / Esercente</label><input type="text" id="fPayee" value="${src.payee?escapeHTML(src.payee):''}" placeholder="es. Esselunga, Affitto, Netflix..."></div>
       <div class="field"><label>Conto origine</label><select id="fAccount">${state.accounts.map(a=>`<option value="${a.id}" ${existing&&existing.account===a.id?'selected':''}>${escapeHTML(a.name)}</option>`).join('')}</select></div>
       <div class="field"><label>Categoria</label>
         <div class="cat-pick" id="catPick">${catNames().map(c=>`<div class="cat-chip ${c===formCategory?'active':''}" data-cat="${c}">${catIcon(c)} ${c}</div>`).join('')}</div>
@@ -2251,6 +2361,7 @@ function openTransactionModal(txId=null){
     const tx={id:existing?existing.id:uid(),date,account,category:formCategory,payee,amount,type:formType,movementType:isTransferFlag?'transfer':'standard',transferTo:transferTo||null,goalId:isTransferFlag?document.getElementById('fGoal').value||null:null,recurring:isRecurring,recurringFreq:isRecurring?document.getElementById('fRecFreq').value:null,recurringNextDate:isRecurring?document.getElementById('fRecNext').value:null};
     if(existing){ Object.assign(existing,tx); }
     else { state.transactions.push(tx); }
+    if(pendingReminderConvert){ state.reminders=(state.reminders||[]).filter(x=>x.id!==pendingReminderConvert); pendingReminderConvert=null; }
     saveState(); closeModal(); render(); toast(existing?'Movimento aggiornato':(isTransferFlag?'Trasferimento aggiunto':'Movimento aggiunto'));
   });
 }
@@ -2445,6 +2556,7 @@ function migrateState(){
   if(!state.stoppedRecurrings) state.stoppedRecurrings=[];
   if(state.tutorialSeen===undefined) state.tutorialSeen=false;
   if(!state.merchantMappings) state.merchantMappings={};
+  if(!state.reminders) state.reminders=[];
   ensureMeta();
   // Il ciclo budget ora è derivato dai movimenti Stipendio, non da un giorno fisso.
 }

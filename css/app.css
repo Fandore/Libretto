@@ -286,6 +286,54 @@ canvas.lib-chart{width:100%;height:260px;display:block;background:rgba(255,255,2
 
 .prompt-box{width:100%;min-height:160px;background:var(--surface-2);border:1px solid var(--line);color:var(--cream);padding:12px;border-radius:9px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.45;resize:vertical;}
 
+/* -------- Budget summary KPIs -------- */
+.budget-kpi-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:10px;}
+.budget-kpi{background:var(--surface-2);border-radius:10px;padding:12px 14px;border:1px solid var(--line);}
+.budget-kpi.bk-warn{border-color:var(--amber);}
+.bk-label{font-size:11px;color:var(--cream-dim);text-transform:uppercase;letter-spacing:.5px;margin-bottom:4px;}
+.bk-value{font-size:18px;font-weight:600;line-height:1.1;}
+.bk-sub{font-size:11.5px;color:var(--cream-dim);margin-top:3px;}
+@media(max-width:760px){.budget-kpi-grid{grid-template-columns:repeat(2,1fr);}.budget-kpi[style*="span 2"]{grid-column:span 2;}}
+
+/* -------- Subscriptions page -------- */
+.sub-table-wrap{overflow-x:auto;border-radius:10px;border:1px solid var(--line);}
+.sub-table{width:100%;border-collapse:collapse;font-size:13.5px;}
+.sub-table thead th{padding:9px 11px;color:var(--cream-dim);font-size:11px;text-transform:uppercase;letter-spacing:.5px;background:var(--surface-2);white-space:nowrap;text-align:left;}
+.sub-table thead th.num{text-align:right;}
+.sub-table tbody tr{border-top:1px solid var(--line);transition:background .15s;}
+.sub-table tbody tr:hover{background:var(--surface-2);}
+.sub-table td{padding:9px 11px;vertical-align:middle;}
+.sub-table td.num{text-align:right;}
+.sub-payee{font-weight:600;font-size:14px;}
+.sub-stop-btn{padding:3px 8px!important;font-size:11px!important;white-space:nowrap;}
+.sub-freq{font-size:11px;padding:2px 6px;}
+.sub-saving-payee{color:var(--sage);}
+.sub-savings-note{font-size:13px;color:var(--cream-dim);line-height:1.45;padding:8px 10px;background:rgba(126,164,135,.1);border-radius:8px;border-left:3px solid var(--sage);}
+
+/* -------- Analytics comparison table -------- */
+.cmp-table tfoot td{padding:9px 11px;border-top:2px solid var(--line);font-size:13.5px;}
+
+/* -------- Calendar -------- */
+.cal-legend{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin-bottom:14px;padding-bottom:12px;border-bottom:1px solid var(--line);}
+.cal-ev-sample{font-size:12px;padding:3px 8px;border-radius:5px;white-space:nowrap;}
+.cal-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;}
+.cal-head{text-align:center;font-size:11px;color:var(--cream-dim);text-transform:uppercase;letter-spacing:.5px;padding:4px 0 8px;}
+.cal-cell{min-height:88px;background:var(--surface-2);border-radius:8px;padding:6px 6px 4px;border:1px solid var(--line);display:flex;flex-direction:column;gap:2px;overflow:hidden;}
+.cal-empty{background:transparent;border-color:transparent;}
+.cal-today{border-color:var(--gold)!important;background:var(--gold-soft)!important;}
+.cal-day-num{font-size:13px;font-weight:600;color:var(--cream-dim);margin-bottom:2px;line-height:1;}
+.cal-salary-num{color:var(--sage);}
+.cal-event{font-size:10.5px;padding:2px 5px;border-radius:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;line-height:1.3;}
+.cal-ev-salary{background:rgba(126,164,135,.18);color:var(--sage);}
+.cal-ev-exp{background:rgba(226,114,91,.14);color:var(--cream-dim);}
+.cal-ev-reminder{background:rgba(139,120,210,.15);color:#a08de0;border:1px dashed rgba(139,120,210,.45);cursor:pointer;}
+.cal-ev-reminder:hover{background:rgba(139,120,210,.28);}
+.cal-ev-reminder-overdue{background:rgba(226,114,91,.22);color:var(--coral);border:1px dashed var(--coral);cursor:pointer;}
+.cal-ev-reminder-overdue:hover{background:rgba(226,114,91,.35);}
+.cal-ev-more{font-size:10px;color:var(--cream-dim);padding-left:4px;}
+.cal-day-total{font-size:10px;color:var(--coral);margin-top:auto;text-align:right;padding-top:2px;}
+@media(max-width:760px){.cal-cell{min-height:60px;padding:4px 3px 3px;}.cal-event{font-size:9.5px;padding:1px 3px;}.cal-day-num{font-size:11px;}.sub-table thead th:nth-child(5),.sub-table td:nth-child(5),.sub-table thead th:nth-child(6),.sub-table td:nth-child(6){display:none;}}
+
 /* -------- What's New banner -------- */
 #whatsNewBanner{position:fixed;bottom:24px;left:50%;transform:translateX(-50%);background:var(--card);border:1px solid var(--sage);border-left:3px solid var(--sage);color:var(--cream);padding:11px 14px 11px 16px;border-radius:9px;display:flex;align-items:center;gap:12px;font-size:13px;max-width:460px;width:calc(100% - 32px);box-shadow:0 4px 22px rgba(0,0,0,.45);z-index:9999;animation:wnSlideUp .3s ease;}
 @keyframes wnSlideUp{from{transform:translateX(-50%) translateY(16px);opacity:0}to{transform:translateX(-50%) translateY(0);opacity:1}}
