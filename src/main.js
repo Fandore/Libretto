@@ -21,7 +21,8 @@ let state = {
   stoppedRecurrings:[],
   tutorialSeen:false,
   merchantMappings:{},
-  reminders:[]
+  reminders:[],
+  travel: null
 };
 
 /* ============ CATEGORY HELPERS ============ */
@@ -210,9 +211,9 @@ function seedTransactions(){
 }
 
 /* ============ PERSISTENCE — STANDALONE BROWSER ============ */
-const APP_VERSION = '22.13-sunday-preview';
+const APP_VERSION = '22.14-travel-mode';
 // Aggiorna questo testo ad ogni deploy — viene mostrato una volta agli utenti esistenti.
-const WHATS_NEW = '📌 Novità: <b>Reminder nel calendario</b> — aggiungi spese future come promemoria (non impattano i saldi). Clicca + Reminder nel Calendario.';
+const WHATS_NEW = '✈️ Novità: <b>Modalità Viaggio</b> — traccia le spese del viaggio separatamente. Trovi la nuova pagina nel menu laterale.';
 const PRECONFIGURED_SUPABASE_URL = 'https://marvmbewsgxrabirugkk.supabase.co';
 const PRECONFIGURED_SUPABASE_ANON_KEY = 'sb_publishable_Jsd4sX6_6pNCUqHIcun4lA_9F81WlPg';
 const STORAGE_KEY = 'libretto-v2-standalone-state';
@@ -979,7 +980,7 @@ function renderAnalytics(){
   const selectedAccount=selectedDashboardAccountId();
   const series=getMonthlySeries(5,0,dash.year,dash.month,selectedAccount).map(row=>{
     const [y,m]=row.key.split('-').map(Number);
-    const txs=txForDashboardAccount(txInPeriod(y,m-1),selectedAccount);
+    const txs=txForDashboardAccount(txInPeriod(y,m-1),selectedAccount).filter(t=>!t.travelTag);
     const income=txs.filter(t=>t.type==='in'&&!isTransfer(t)).reduce((s,t)=>s+t.amount,0);
     const expense=txs.filter(isRealExpense).reduce((s,t)=>s+t.amount,0);
     const transfers=txs.filter(isTransfer).reduce((s,t)=>s+t.amount,0);
@@ -989,7 +990,7 @@ function renderAnalytics(){
   const fixed=fixedExpenses();
   const fixedTotal=monthlyFixedTotal();
   const proj=projectionRows(6);
-  const txs=txForDashboardAccount(txInBounds(dash.bounds),selectedAccount);
+  const txs=txForDashboardAccount(txInBounds(dash.bounds),selectedAccount).filter(t=>!t.travelTag);
   const byCat=spentByCategory(txs);
   const maxCat=Math.max(1,...Object.values(byCat));
   return `
@@ -1212,7 +1213,7 @@ function renderTransactions(){
 /* ============ BUDGET ============ */
 function renderBudget(){
   const budgetCycle=activeDashboardCycle();
-  const txs=txInBounds(budgetCycle.bounds);
+  const txs=txInBounds(budgetCycle.bounds).filter(t=>!t.travelTag);
   const byCat=spentByCategory(txs);
   // I trasferimenti (es. versamento a Conto Arancio) contano nel budget della categoria assegnata
   txs.filter(t=>isTransfer(t)&&t.category&&t.category!=='Stipendio').forEach(t=>{
@@ -1361,6 +1362,90 @@ function renderCategories(){
 
 
 
+
+/* ============ TRAVEL MODE ============ */
+function isInTravel(){ return !!(state.travel && state.travel.active); }
+function travelTxs(){ return (state.transactions||[]).filter(t=>t.travelTag); }
+function travelSpentByCat(){
+  const m={}; travelTxs().filter(t=>t.type==='out'&&!isTransfer(t)).forEach(t=>{ m[t.category]=(m[t.category]||0)+t.amount; }); return m;
+}
+function travelTotalSpent(){ return travelTxs().filter(t=>t.type==='out'&&!isTransfer(t)).reduce((s,t)=>s+t.amount,0); }
+
+function terminateTravel(){
+  if(!state.categories.some(c=>c.name==='Viaggi')) state.categories.push({name:'Viaggi',icon:'✈️',color:'#5fb3c9'});
+  const tripName=state.travel.name||'Viaggio';
+  const byAccount={};
+  travelTxs().filter(t=>t.type==='out'&&!isTransfer(t)).forEach(t=>{ byAccount[t.account]=(byAccount[t.account]||0)+t.amount; });
+  const totalSpent=Object.values(byAccount).reduce((s,v)=>s+v,0);
+  state.transactions=state.transactions.filter(t=>!t.travelTag);
+  Object.entries(byAccount).forEach(([acctId,total])=>{
+    if(total>0) state.transactions.push({id:uid(),date:isoToday(),account:acctId,category:'Viaggi',payee:tripName,amount:total,type:'out',movementType:'standard',recurring:false,recurringFreq:null,recurringNextDate:null});
+  });
+  state.travel={...state.travel,active:false,endDate:isoToday()};
+  saveState(); render();
+  toast(`Viaggio "${tripName}" terminato · ${fmtEUR(totalSpent)} → Viaggi`);
+}
+
+function renderTravel(){
+  const travel=state.travel;
+  if(!travel || !travel.active){
+    const catOpts=catNames().filter(c=>c!=='Stipendio'&&c!=='Risparmi').map(c=>`
+      <div class="frow" style="align-items:center;margin-bottom:6px;">
+        <label style="flex:1;font-size:13px;">${catIcon(c)} ${c}</label>
+        <input type="number" class="travel-budget-input" data-cat="${escapeHTML(c)}" step="0.01" min="0" placeholder="—" value="${escapeHTML(String(travel?.categoryBudgets?.[c]||''))}" style="width:100px;text-align:right;">
+      </div>`).join('');
+    const pastTrip=travel?`<div class="card" style="margin-bottom:16px;"><h3>Ultimo viaggio</h3>
+      <div class="rec-item"><div><div class="nm">✈️ ${escapeHTML(travel.name||'—')}</div><div class="freq">${travel.startDate||'—'} → ${travel.endDate||'in corso'}</div></div></div>
+    </div>`:'';
+    return `
+    <div class="topbar"><h1>✈️ Modalità Viaggio</h1></div>
+    ${pastTrip}
+    <div class="card">
+      <h3>Inizia un nuovo viaggio</h3>
+      <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">Le spese del viaggio non impattano Budget e Analisi, e vengono collassate in "Viaggi" alla fine.</p>
+      <div class="field"><label>Nome del viaggio</label><input type="text" id="travelName" placeholder="es. Barcellona 2026, Weekend Roma…"></div>
+      <div class="field"><label>Data inizio</label><input type="date" id="travelStart" value="${isoToday()}"></div>
+      <details style="margin-top:4px;"><summary style="cursor:pointer;font-size:13px;color:var(--muted);padding:6px 0;">Budget per categoria (opzionale)</summary>
+        <div style="margin-top:10px;">${catOpts}</div>
+      </details>
+      <div class="modal-actions" style="margin-top:16px;"><button class="btn" id="startTravelBtn">✈️ Inizia viaggio</button></div>
+    </div>`;
+  }
+  const days=Math.max(1,Math.floor((Date.now()-new Date(travel.startDate).getTime())/86400000)+1);
+  const spentByCat=travelSpentByCat();
+  const totalSpent=travelTotalSpent();
+  const budgets=travel.categoryBudgets||{};
+  const totalBudget=Object.values(budgets).reduce((s,v)=>s+(parseFloat(v)||0),0);
+  const txList=travelTxs().filter(t=>t.type==='out'&&!isTransfer(t)).sort((a,b)=>b.date.localeCompare(a.date));
+  const catRows=Object.entries(spentByCat).sort(([,a],[,b])=>b-a).map(([cat,spent])=>{
+    const bud=parseFloat(budgets[cat]||0);
+    const pct=bud>0?Math.min(100,(spent/bud)*100):0;
+    const col=pct>100?'var(--coral)':pct>80?'#e0975c':'var(--sage)';
+    return `<div class="catbar-row">
+      <div class="catbar-top"><div class="nm">${catIcon(cat)} ${cat}</div><div class="amt num">${fmtEUR(spent)}${bud>0?` <span style="color:${col};font-size:11px;">${pct.toFixed(0)}%</span>`:''}</div></div>
+      ${bud>0?`<div class="catbar-track"><div class="catbar-fill" style="width:${pct.toFixed(0)}%;background:${col}"></div></div>`:''}</div>`;
+  }).join('');
+  const txRows=txList.slice(0,25).map(t=>`<div class="rec-item"><div><div class="nm">${catIcon(t.category)} ${escapeHTML(t.payee||'—')}</div><div class="freq">${t.date} · ${t.category}</div></div><div class="num neg">-${fmtEUR(t.amount)}</div></div>`).join('');
+  const budKpi=totalBudget>0?`<div class="mini-kpi"><div class="mlabel">Budget totale</div><div class="mvalue num ${totalSpent>totalBudget?'neg':'pos'}">${fmtEUR(totalBudget-totalSpent)} ${totalSpent>totalBudget?'sforato':'rimasto'}</div><div class="sync-note">${fmtEUR(totalSpent)} / ${fmtEUR(totalBudget)}</div></div>`:'';
+  return `
+  <div class="topbar"><h1>✈️ ${escapeHTML(travel.name)}</h1><div class="month-switch"><div class="label">Giorno ${days}</div></div></div>
+  <div class="alert-banner" style="margin-bottom:16px;background:rgba(95,179,201,.1);border-color:rgba(95,179,201,.35);">
+    <div class="aicon">✈️</div>
+    <div class="abody"><div class="atitle">Viaggio in corso · dal ${travel.startDate}</div>
+    <div class="adesc">Spese registrate solo nel viaggio — escluse da Budget e Analisi. Alla fine verranno collassate in "Viaggi".</div></div>
+  </div>
+  <div class="mini-grid" style="margin-bottom:16px;">
+    <div class="mini-kpi"><div class="mlabel">Speso finora</div><div class="mvalue num neg">${fmtEUR(totalSpent)}</div><div class="sync-note">${txList.length} moviment${txList.length===1?'o':'i'}</div></div>
+    ${budKpi}
+  </div>
+  ${catRows?`<div class="card" style="margin-bottom:16px;"><h3>Spese per categoria</h3>${catRows}</div>`:''}
+  ${txRows?`<div class="card" style="margin-bottom:16px;"><h3>Movimenti</h3>${txRows}${txList.length>25?`<div class="empty" style="padding:8px">+${txList.length-25} altri movimenti</div>`:''}</div>`:'<div class="card" style="margin-bottom:16px;"><div class="empty">Nessuna spesa ancora — aggiungile con il tasto +</div></div>'}
+  <div class="card" style="border-color:rgba(226,114,91,.3);">
+    <h3 style="color:var(--coral)">Termina viaggio</h3>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:12px;">Tutte le ${txList.length} spese (${fmtEUR(totalSpent)}) verranno collassate in "Viaggi". L'azione non è reversibile.</p>
+    <button class="btn danger" id="terminateTravelBtn">🏁 Termina viaggio</button>
+  </div>`;
+}
 
 function cloudLiveStatusHTML(){
   const logged=!!cloud.user;
@@ -1628,11 +1713,23 @@ function render(){
     else if(currentPage==='help') main.innerHTML=renderHelp();
     else if(currentPage==='subscriptions') main.innerHTML=renderSubscriptions();
     else if(currentPage==='calendar') main.innerHTML=renderCalendar();
+    else if(currentPage==='travel') main.innerHTML=renderTravel();
     else if(currentPage==='feedback') main.innerHTML=renderFeedback();
     bindPageEvents();
   }catch(e){
     console.error('Errore rendering Libretto', e);
     main.innerHTML=`<div class="topbar"><h1>Ops, qualcosa non torna</h1></div><div class="card"><h3>Errore temporaneo</h3><div class="empty" style="text-align:left">Ho intercettato un problema nel rendering della pagina. Prova a esportare un backup dalla sezione Conti/Backup se disponibile, oppure ricarica la pagina. Dettaglio tecnico: ${escapeHTML(e.message||String(e))}</div></div>`;
+  }
+  // Travel banner (outside main, persiste tra le pagine)
+  const tb=document.getElementById('travelBannerRoot');
+  if(tb){
+    if(isInTravel()){
+      const days=Math.max(1,Math.floor((Date.now()-new Date(state.travel.startDate).getTime())/86400000)+1);
+      tb.innerHTML=`<div class="travel-banner-bar">✈️ <b>${escapeHTML(state.travel.name)}</b> · giorno ${days} · <span class="num">${fmtEUR(travelTotalSpent())}</span> spesi <button id="goTravelBtn" class="btn small ghost" style="margin-left:8px;padding:2px 10px;font-size:12px">Vai al viaggio →</button></div>`;
+      document.getElementById('goTravelBtn')?.addEventListener('click',()=>setPage('travel'));
+    }else{
+      tb.innerHTML='';
+    }
   }
 }
 
@@ -1978,6 +2075,22 @@ function bindPageEvents(){
   const addReminderBtn=document.getElementById('addReminderBtn');
   if(addReminderBtn) addReminderBtn.addEventListener('click',()=>openReminderModal());
   document.querySelectorAll('[data-reminder-id]').forEach(el=>el.addEventListener('click',e=>{ e.stopPropagation(); openReminderActionModal(el.dataset.reminderId); }));
+
+  // travel mode
+  const startTravelBtn=document.getElementById('startTravelBtn');
+  if(startTravelBtn) startTravelBtn.addEventListener('click',()=>{
+    const name=(document.getElementById('travelName')?.value||'').trim();
+    const startDate=document.getElementById('travelStart')?.value||isoToday();
+    if(!name){ toast('Inserisci il nome del viaggio'); return; }
+    const categoryBudgets={};
+    document.querySelectorAll('.travel-budget-input').forEach(inp=>{ const v=parseFloat(inp.value); if(v>0) categoryBudgets[inp.dataset.cat]=v; });
+    state.travel={active:true,name,startDate,endDate:null,categoryBudgets};
+    saveState(); render(); toast(`Viaggio "${name}" iniziato! Le spese vengono ora tracciate separatamente.`);
+  });
+  const terminateTravelBtn=document.getElementById('terminateTravelBtn');
+  if(terminateTravelBtn) terminateTravelBtn.addEventListener('click',()=>{
+    openConfirm('Terminare il viaggio?',`Tutte le spese (${fmtEUR(travelTotalSpent())}) verranno collassate in "Viaggi". Questa azione non è reversibile.`,terminateTravel);
+  });
 
   // alert dismiss
   document.querySelectorAll('[data-dismiss]').forEach(b=>b.addEventListener('click',()=>dismissAlert(b.dataset.dismiss)));
@@ -2359,6 +2472,7 @@ function openTransactionModal(txId=null,prefill=null){
     if(!amount||amount<=0){ toast('Inserisci un importo valido'); return; }
     if(isTransferFlag&&transferTo===account){ toast('Scegli un conto destinazione diverso'); return; }
     const tx={id:existing?existing.id:uid(),date,account,category:formCategory,payee,amount,type:formType,movementType:isTransferFlag?'transfer':'standard',transferTo:transferTo||null,goalId:isTransferFlag?document.getElementById('fGoal').value||null:null,recurring:isRecurring,recurringFreq:isRecurring?document.getElementById('fRecFreq').value:null,recurringNextDate:isRecurring?document.getElementById('fRecNext').value:null};
+    if(!existing && isInTravel() && formType==='out' && !isTransferFlag) tx.travelTag=true;
     if(existing){ Object.assign(existing,tx); }
     else { state.transactions.push(tx); }
     if(pendingReminderConvert){ state.reminders=(state.reminders||[]).filter(x=>x.id!==pendingReminderConvert); pendingReminderConvert=null; }
@@ -2557,6 +2671,7 @@ function migrateState(){
   if(state.tutorialSeen===undefined) state.tutorialSeen=false;
   if(!state.merchantMappings) state.merchantMappings={};
   if(!state.reminders) state.reminders=[];
+  if(state.travel===undefined) state.travel=null;
   ensureMeta();
   // Il ciclo budget ora è derivato dai movimenti Stipendio, non da un giorno fisso.
 }
