@@ -15,10 +15,10 @@ create extension if not exists pg_net   with schema extensions;
 alter database postgres set app.cron_secret = 'CAMBIA_QUESTO_VALORE';
 
 
--- 3. Riepilogo SETTIMANALE — ogni lunedì alle 08:00 UTC (09:00/10:00 IT)
+-- 3. Riepilogo SETTIMANALE — ogni martedì alle 08:00 UTC (10:00 IT estate)
 select cron.schedule(
   'libretto-weekly-report',                  -- nome del job (univoco)
-  '0 8 * * 1',                               -- cron: ogni lunedì alle 08:00 UTC
+  '0 8 * * 2',                               -- cron: ogni martedì alle 08:00 UTC
   $$
   select extensions.http_post(
     url     := 'https://marvmbewsgxrabirugkk.supabase.co/functions/v1/send-report',
@@ -32,10 +32,10 @@ select cron.schedule(
 );
 
 
--- 4. Riepilogo MENSILE — primo del mese alle 08:00 UTC
+-- 4. Riepilogo MENSILE — 5° del mese alle 08:00 UTC (10:00 IT estate)
 select cron.schedule(
   'libretto-monthly-report',                 -- nome del job
-  '0 8 1 * *',                              -- cron: primo del mese alle 08:00 UTC
+  '0 8 5 * *',                              -- cron: 5° del mese alle 08:00 UTC
   $$
   select extensions.http_post(
     url     := 'https://marvmbewsgxrabirugkk.supabase.co/functions/v1/send-report',
@@ -44,6 +44,24 @@ select cron.schedule(
       'Authorization', 'Bearer ' || current_setting('app.cron_secret', true)
     ),
     body    := '{"type":"monthly"}'::jsonb
+  ) as request_id;
+  $$
+);
+
+
+-- 5. Promemoria MENSILE scadenze — 5° del mese alle 07:00 UTC (09:00 IT estate)
+--    (un'ora prima del riepilogo mensile, così arriva come "agenda del mese")
+select cron.schedule(
+  'libretto-monthly-reminder',               -- nome del job
+  '0 7 5 * *',                               -- cron: 5° del mese alle 07:00 UTC
+  $$
+  select extensions.http_post(
+    url     := 'https://marvmbewsgxrabirugkk.supabase.co/functions/v1/send-monthly-reminder',
+    headers := jsonb_build_object(
+      'Content-Type',  'application/json',
+      'Authorization', 'Bearer ' || current_setting('app.cron_secret', true)
+    ),
+    body    := '{}'::jsonb
   ) as request_id;
   $$
 );
@@ -62,6 +80,19 @@ select cron.schedule(
 -- Elimina i job (se serve ricrearne uno):
 -- select cron.unschedule('libretto-weekly-report');
 -- select cron.unschedule('libretto-monthly-report');
+-- select cron.unschedule('libretto-monthly-reminder');
+
+-- AGGIORNAMENTO SCHEDULE (martedì + giorno 5):
+-- I job weekly e monthly-report erano già attivi con le vecchie schedule.
+-- Eseguire questi 2 comandi nel SQL Editor per aggiornarli:
+--
+-- select cron.unschedule('libretto-weekly-report');
+-- select cron.schedule('libretto-weekly-report','0 8 * * 2',
+--   $$ select extensions.http_post(url:='https://marvmbewsgxrabirugkk.supabase.co/functions/v1/send-report',headers:=jsonb_build_object('Content-Type','application/json','Authorization','Bearer '||current_setting('app.cron_secret',true)),body:='{"type":"weekly"}'::jsonb) as request_id; $$);
+--
+-- select cron.unschedule('libretto-monthly-report');
+-- select cron.schedule('libretto-monthly-report','0 8 5 * *',
+--   $$ select extensions.http_post(url:='https://marvmbewsgxrabirugkk.supabase.co/functions/v1/send-report',headers:=jsonb_build_object('Content-Type','application/json','Authorization','Bearer '||current_setting('app.cron_secret',true)),body:='{"type":"monthly"}'::jsonb) as request_id; $$);
 
 -- Test manuale della Edge Function da SQL (utile per debug):
 -- select extensions.http_post(
@@ -71,4 +102,14 @@ select cron.schedule(
 --     'Authorization', 'Bearer ' || current_setting('app.cron_secret', true)
 --   ),
 --   body    := '{"type":"monthly"}'::jsonb
+-- ) as request_id;
+
+-- Test manuale del promemoria scadenze:
+-- select extensions.http_post(
+--   url     := 'https://marvmbewsgxrabirugkk.supabase.co/functions/v1/send-monthly-reminder',
+--   headers := jsonb_build_object(
+--     'Content-Type',  'application/json',
+--     'Authorization', 'Bearer ' || current_setting('app.cron_secret', true)
+--   ),
+--   body    := '{}'::jsonb
 -- ) as request_id;
