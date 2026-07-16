@@ -49,6 +49,42 @@ function stoppedRecurringsDetails(){
     return {payee:tx.payee,category:tx.category,amount:tx.amount,freq:tx.recurringFreq||'Mensile'};
   }).filter(Boolean);
 }
+/** Bounds del ciclo di stipendio precedente a quello corrente, o null se non disponibile. */
+function prevCycleBounds(){
+  const dates=salaryDates();
+  const current=latestSalaryStart();
+  if(!current||dates.length<2) return null;
+  const idx=dates.findIndex(d=>d.getTime()===current.getTime());
+  if(idx<=0) return null;
+  const prevStart=dates[idx-1];
+  return {start:prevStart,end:new Date(current.getTime()-1)};
+}
+/** Giorni del mese (year, month 0-based) in cui una spesa ricorrente è attesa. */
+function recurringDaysInMonth(expense,year,month){
+  let anchor=expense.nextDate?new Date(expense.nextDate):null;
+  if(!anchor){
+    const tx=state.transactions.filter(t=>(t.payee||'').toLowerCase()===(expense.payee||'').toLowerCase()&&t.recurring).sort((a,b)=>b.date.localeCompare(a.date))[0];
+    if(tx&&tx.recurringNextDate) anchor=new Date(tx.recurringNextDate);
+    else if(tx) anchor=new Date(tx.date);
+  }
+  if(!anchor) return [];
+  const maxDay=new Date(year,month+1,0).getDate();
+  const aDay=Math.min(anchor.getDate(),maxDay);
+  const freq=expense.freq||'Mensile';
+  if(freq==='Mensile') return [aDay];
+  if(freq==='Annuale') return anchor.getMonth()===month?[aDay]:[];
+  if(freq==='Bimestrale'){
+    const aYM=anchor.getFullYear()*12+anchor.getMonth();
+    const tYM=year*12+month;
+    return (tYM-aYM)%2===0?[aDay]:[];
+  }
+  if(freq==='Settimanale'){
+    const dow=anchor.getDay(); const result=[];
+    for(let d=1;d<=maxDay;d++) if(new Date(year,month,d).getDay()===dow) result.push(d);
+    return result;
+  }
+  return [aDay];
+}
 
 /* ============ UTILS ============ */
 // uid, isoToday, addDays, fmtEUR, fmtDate, escapeHTML, lastDayOfMonth, clampDay,
@@ -173,9 +209,9 @@ function seedTransactions(){
 }
 
 /* ============ PERSISTENCE — STANDALONE BROWSER ============ */
-const APP_VERSION = '22.8-isybank';
+const APP_VERSION = '22.11-dashboard-fix';
 // Aggiorna questo testo ad ogni deploy — viene mostrato una volta agli utenti esistenti.
-const WHATS_NEW = '🏦 Novità: puoi importare i movimenti da <b>IsyBank</b> — le categorie vengono riconosciute automaticamente.';
+const WHATS_NEW = '🔧 Fix dashboard: il filtro <b>Tutti i conti</b> ora funziona correttamente e tutti i widget si aggiornano in base al conto selezionato.';
 const PRECONFIGURED_SUPABASE_URL = 'https://marvmbewsgxrabirugkk.supabase.co';
 const PRECONFIGURED_SUPABASE_ANON_KEY = 'sb_publishable_Jsd4sX6_6pNCUqHIcun4lA_9F81WlPg';
 const STORAGE_KEY = 'libretto-v2-standalone-state';
@@ -414,8 +450,9 @@ function totalAccountBalance(){ return state.accounts.reduce((s,a)=>s+accountBal
 function accountBalanceMap(){ const m={}; state.accounts.forEach(a=>m[a.id]=accountBalance(a.id)); return m; }
 function selectedDashboardAccountId(){
   const id=state.settings && state.settings.dashboardAccountId;
+  if(id==='all') return 'all';
   if(id && state.accounts.some(a=>a.id===id)) return id;
-  return state.accounts[0] ? state.accounts[0].id : 'all';
+  return 'all';
 }
 function dashboardShowBalances(){ return !(state.settings && state.settings.dashboardShowBalances===false); }
 function txMatchesAccount(t,accountId){
@@ -497,6 +534,13 @@ function fixedExpenses(){
   const map={};
   explicit.forEach(t=>{ const k=(t.payee||'').toLowerCase()+'|'+t.account+'|'+t.category; const avg=avgLastNAmounts(t.payee,t.category,3); map[k]={payee:t.payee,category:t.category,amount:avg??t.amount,freq:t.recurringFreq||'Mensile',source:'manuale',nextDate:t.recurringNextDate||null}; });
   detected.forEach(r=>{ const k=(r.payee||'').toLowerCase()+'|'+r.category; if(!map[k]) map[k]={payee:r.payee,category:r.category,amount:r.amount,freq:r.freq,source:'rilevata'}; });
+  // Trasferimenti ricorrenti = risparmi programmati (non riducono il patrimonio totale, ma riducono il liquido disponibile)
+  state.transactions
+    .filter(t=>isTransfer(t)&&t.recurring&&!isRecurringStopped(t.payee,t.category))
+    .forEach(t=>{
+      const k=(t.payee||'').toLowerCase()+'|'+t.account+'|saving';
+      if(!map[k]) map[k]={payee:t.payee,category:t.category||'Risparmi',amount:t.amount,freq:t.recurringFreq||'Mensile',source:'manuale',nextDate:t.recurringNextDate||null,isSaving:true};
+    });
   return Object.values(map).sort((a,b)=>b.amount-a.amount);
 }
 function recurringMonthlyEquivalent(amount,freq){
@@ -524,6 +568,27 @@ function fixedExpensesForMonth(projDate){
     return (check.getFullYear()===py&&check.getMonth()===pm) ? total+f.amount : total;
   },0);
 }
+/** Come fixedExpensesForMonth, ma separa spese (isSaving:false) da risparmi (isSaving:true). */
+function fixedExpensesForMonthSplit(projDate){
+  const py=projDate.getFullYear(), pm=projDate.getMonth();
+  let expenses=0, savings=0;
+  fixedExpenses().forEach(f=>{
+    let amount=0;
+    if(f.freq==='Mensile') amount=f.amount;
+    else if(f.freq==='Settimanale') amount=f.amount*4.33;
+    else if(!f.nextDate) amount=recurringMonthlyEquivalent(f.amount,f.freq);
+    else{
+      const step=f.freq==='Bimestrale'?2:12;
+      const nd=parseISODate(f.nextDate);
+      let check=new Date(nd.getFullYear(),nd.getMonth(),1);
+      while(check>new Date(py,pm,1)) check=addMonths(check,-step);
+      while(check<new Date(py,pm,1)) check=addMonths(check,step);
+      if(check.getFullYear()===py&&check.getMonth()===pm) amount=f.amount;
+    }
+    if(f.isSaving) savings+=amount; else expenses+=amount;
+  });
+  return {expenses,savings};
+}
 function recurringSummaryByCategory(selectedAccount='all'){
   const items=[];
   state.transactions.filter(t=>isRealExpense(t)&&t.recurring&&txMatchesAccount(t,selectedAccount)).forEach(t=>{
@@ -547,8 +612,16 @@ function recurringSummaryByCategory(selectedAccount='all'){
 function recurringSummaryHTML(selectedAccount='all'){
   const groups=recurringSummaryByCategory(selectedAccount);
   const stopped=stoppedRecurringsDetails();
+  // Risparmi programmati (trasferimenti ricorrenti)
+  const savingsItems=state.transactions
+    .filter(t=>isTransfer(t)&&t.recurring&&txMatchesAccount(t,selectedAccount)&&!isRecurringStopped(t.payee,t.category));
+  const savingsTotal=savingsItems.reduce((s,t)=>s+recurringMonthlyEquivalent(t.amount,t.recurringFreq||'Mensile'),0);
+  const savingsSection=savingsItems.length?`<div style="margin-top:14px;padding-top:10px;border-top:1px solid var(--line)">
+    <div class="sync-note" style="margin-bottom:6px;color:var(--sage)">🏦 Risparmi programmati — <span class="num">${fmtEUR(savingsTotal)}</span>/mese</div>
+    ${savingsItems.map(t=>`<div class="budget-row-foot" style="display:flex;justify-content:space-between;align-items:center;padding:3px 0">🏦 ${escapeHTML(t.payee||'—')} · ${t.recurringFreq||'Mensile'}<span class="num" style="color:var(--sage)">${fmtEUR(recurringMonthlyEquivalent(t.amount,t.recurringFreq||'Mensile'))}/m</span></div>`).join('')}
+  </div>`:'';
   const stoppedSection=stopped.length?`<div style="margin-top:14px"><div class="sync-note" style="margin-bottom:6px">Ricorrenti fermate — non incluse nelle proiezioni:</div>${stopped.map(s=>`<div class="budget-row-foot" style="display:flex;justify-content:space-between;align-items:center;padding:4px 0">${catIcon(s.category)} ${escapeHTML(s.payee||'—')} · ${s.freq}<button class="btn small ghost" data-stop-rec="${escapeHTML(s.payee)}" data-stop-rec-cat="${escapeHTML(s.category)}" style="padding:2px 8px;font-size:11px">▶ Riattiva</button></div>`).join('')}</div>`:'';
-  if(!groups.length) return `<div class="empty">Nessuna spesa ricorrente ancora. Puoi marcarle quando inserisci o modifichi un movimento.</div>${stoppedSection}`;
+  if(!groups.length) return `<div class="empty">Nessuna spesa ricorrente ancora. Puoi marcarle quando inserisci o modifichi un movimento.</div>${savingsSection}${stoppedSection}`;
   const total=groups.reduce((s,g)=>s+g.total,0);
   const max=Math.max(1,...groups.map(g=>g.total));
   return `<div class="mini-grid" style="grid-template-columns:1fr;margin-bottom:14px;"><div class="mini-kpi"><div class="mlabel">Totale ricorrente stimato</div><div class="mvalue num neg">${fmtEUR(total)}</div><div class="sync-note">equivalente mensile per ${escapeHTML(accountOptionLabel(selectedAccount))}</div></div></div>`+
@@ -556,7 +629,7 @@ function recurringSummaryHTML(selectedAccount='all'){
       <div class="catbar-top"><div class="nm">${catIcon(g.category)} ${g.category} <span class="pill rec">${g.count} voc${g.count===1?'e':'i'}</span></div><div class="amt num">${fmtEUR(g.total)}</div></div>
       <div class="catbar-track"><div class="catbar-fill" style="width:${(g.total/max*100).toFixed(0)}%;background:${catColor(g.category)}"></div></div>
       <div class="budget-row-foot" style="display:flex;flex-wrap:wrap;gap:4px;align-items:center">${g.items.map(i=>`<span style="display:flex;align-items:center;gap:4px">${escapeHTML(i.payee||'—')} · ${i.freq} · ${fmtEUR(i.monthly)}/mese <button class="btn small ghost" data-stop-rec="${escapeHTML(i.payee)}" data-stop-rec-cat="${escapeHTML(i.category)}" style="padding:2px 6px;font-size:11px" title="Ferma questa ricorrente">⏹</button></span>`).join('<span style="opacity:.4">·</span>')}${g.items.length>3?' …':''}</div>
-    </div>`).join('')+stoppedSection;
+    </div>`).join('')+savingsSection+stoppedSection;
 }
 function projectionRows(n=6){
   // Solo lo stipendio è ricorrente: le altre entrate (bonus, rimborsi, ecc.) non si proiettano
@@ -571,10 +644,13 @@ function projectionRows(n=6){
   for(let i=1;i<=n;i++){
     const projDate=addMonths(base,i);
     const key=monthKeyFromDate(projDate);
-    const fixed=fixedExpensesForMonth(projDate);
-    const net=incomeAvg-fixed;
+    const {expenses,savings}=fixedExpensesForMonthSplit(projDate);
+    // I risparmi spostano denaro tra conti → il patrimonio totale cresce solo di income−expenses
+    const net=incomeAvg-expenses;
     start+=net;
-    rows.push({key,label:monthLabel(key),income:incomeAvg,fixed,net,balance:start});
+    // Netto libero = quello che rimane dopo spese E risparmi programmati
+    const netFree=incomeAvg-expenses-savings;
+    rows.push({key,label:monthLabel(key),income:incomeAvg,fixed:expenses,savings,net:netFree,balance:start});
   }
   return rows;
 }
@@ -704,6 +780,8 @@ function updateNavVisibility(){
 let currentPage='dashboard';
 let viewMonth=new Date().getMonth();
 let viewYear=new Date().getFullYear();
+let calViewMonth=new Date().getMonth();
+let calViewYear=new Date().getFullYear();
 let selectedTxIds=new Set();
 let txFilterCat='';
 let txFilterMonth='';
@@ -803,7 +881,7 @@ function renderDashboard(){
     <div class="card kpi"><div class="label">Uscite ciclo</div><div class="value num neg">${fmtEUR(expense)}</div><div class="delta">spese reali, esclusi trasferimenti</div></div>
     <div class="card kpi"><div class="label">Risparmio ciclo</div><div class="value num ${net>=0?'pos':'neg'}">${fmtEUR(net)}</div><div class="delta">entrate - uscite</div></div>
   </div>
-  ${accountBalancesCardHTML()}
+  ${selectedAccount==='all' ? accountBalancesCardHTML() : ''}
   <div class="card" style="margin-bottom:16px;">
     <h3>Andamento ciclo per ciclo — ${escapeHTML(accountOptionLabel(selectedAccount))}</h3>
     <div class="chart-wrap"><canvas class="lib-chart" id="dashboardTrend"></canvas></div>
@@ -827,6 +905,71 @@ function renderDashboard(){
     </div>
   </div>
   <div class="card"><h3>Movimenti recenti — ${escapeHTML(accountOptionLabel(selectedAccount))}</h3><div class="tx-list">${recent.length===0?`<div class="empty">Nessun movimento. Premi + per iniziare.</div>`:recent.map(t=>txRowHTML(t,false)).join('')}</div></div>`;
+}
+
+/* ============ SUBSCRIPTIONS ============ */
+function renderSubscriptions(){
+  const all=fixedExpenses();
+  const active=all.filter(f=>!f.isSaving);
+  const savings=all.filter(f=>f.isSaving);
+  const stopped=stoppedRecurringsDetails();
+  const totalMonthly=active.reduce((s,f)=>s+recurringMonthlyEquivalent(f.amount,f.freq),0);
+  const totalAnnual=totalMonthly*12;
+  const savingsMonthly=savings.reduce((s,f)=>s+recurringMonthlyEquivalent(f.amount,f.freq),0);
+  const freqBadge=freq=>`<span class="pill rec sub-freq">${{Mensile:'mensile',Settimanale:'sett.',Bimestrale:'bimest.',Annuale:'annuale'}[freq]||freq}</span>`;
+  const nextDateStr=f=>{ if(!f.nextDate) return '—'; const d=parseISODate(f.nextDate); return d.toLocaleDateString('it-IT',{day:'2-digit',month:'short',year:'numeric'}); };
+  const activeRows=active.length===0
+    ?`<div class="empty">Nessuna spesa ricorrente attiva. Marca un movimento come ricorrente per vederla qui.</div>`
+    :`<div class="sub-table-wrap"><table class="sub-table">
+      <thead><tr><th>Esercente</th><th>Categoria</th><th>Frequenza</th><th class="num">Importo</th><th class="num">≈/mese</th><th class="num">≈/anno</th><th>Prossima</th><th></th></tr></thead>
+      <tbody>${active.map(f=>`<tr>
+        <td><span class="sub-payee">${catIcon(f.category)} ${escapeHTML(f.payee)}</span></td>
+        <td style="color:var(--cream-dim);font-size:13px">${escapeHTML(f.category)}</td>
+        <td>${freqBadge(f.freq)}</td>
+        <td class="num" style="color:var(--coral)">−${fmtEUR(f.amount)}</td>
+        <td class="num" style="color:var(--cream-dim)">${fmtEUR(recurringMonthlyEquivalent(f.amount,f.freq))}</td>
+        <td class="num" style="color:var(--cream-dim)">${fmtEUR(recurringMonthlyEquivalent(f.amount,f.freq)*12)}</td>
+        <td style="color:var(--cream-dim);font-size:13px">${nextDateStr(f)}</td>
+        <td><button class="btn small ghost sub-stop-btn" data-stop-rec="${escapeHTML(f.payee)}" data-stop-rec-cat="${escapeHTML(f.category)}">⏹ Stop</button></td>
+      </tr>`).join('')}</tbody>
+    </table></div>`;
+  const stoppedSection=stopped.length===0?'':`
+    <div class="card" style="margin-top:16px">
+      <h3>Ricorrenti sospese</h3>
+      ${stopped.map(s=>`<div class="rec-item">
+        <div><div class="nm">${catIcon(s.category)} ${escapeHTML(s.payee)} ${freqBadge(s.freq)}</div><div class="freq">Sospesa — non inclusa nelle proiezioni</div></div>
+        <div style="display:flex;align-items:center;gap:10px"><span class="num" style="color:var(--cream-dim)">−${fmtEUR(s.amount)}</span><button class="btn small ghost" data-stop-rec="${escapeHTML(s.payee)}" data-stop-rec-cat="${escapeHTML(s.category)}">▶ Riattiva</button></div>
+      </div>`).join('')}
+    </div>`;
+  const savingsSection=savings.length===0?'':`
+  <div class="card" style="margin-top:16px">
+    <h3>🏦 Risparmi programmati</h3>
+    <div class="sub-savings-note">Trasferimenti ricorrenti verso conti risparmio/investimento. Non riducono il patrimonio totale, ma vengono inclusi nelle proiezioni come impegno mensile sul conto di origine.</div>
+    <div class="sub-table-wrap" style="margin-top:12px"><table class="sub-table">
+      <thead><tr><th>Destinazione</th><th>Categoria</th><th>Frequenza</th><th class="num">Importo</th><th class="num">≈/mese</th><th class="num">≈/anno</th><th>Prossima</th><th></th></tr></thead>
+      <tbody>${savings.map(f=>`<tr>
+        <td><span class="sub-payee sub-saving-payee">🏦 ${escapeHTML(f.payee)}</span></td>
+        <td style="color:var(--cream-dim);font-size:13px">${escapeHTML(f.category)}</td>
+        <td>${freqBadge(f.freq)}</td>
+        <td class="num" style="color:var(--sage)">${fmtEUR(f.amount)}</td>
+        <td class="num" style="color:var(--cream-dim)">${fmtEUR(recurringMonthlyEquivalent(f.amount,f.freq))}</td>
+        <td class="num" style="color:var(--cream-dim)">${fmtEUR(recurringMonthlyEquivalent(f.amount,f.freq)*12)}</td>
+        <td style="color:var(--cream-dim);font-size:13px">${nextDateStr(f)}</td>
+        <td><button class="btn small ghost sub-stop-btn" data-stop-rec="${escapeHTML(f.payee)}" data-stop-rec-cat="${escapeHTML(f.category)}">⏹ Stop</button></td>
+      </tr>`).join('')}</tbody>
+    </table></div>
+  </div>`;
+  return `
+  <div class="topbar"><h1>Abbonamenti e ricorrenti</h1></div>
+  <div class="mini-grid" style="margin-bottom:16px">
+    <div class="mini-kpi"><div class="mlabel">Ricorrenti attive</div><div class="mvalue">${active.length}</div></div>
+    <div class="mini-kpi"><div class="mlabel">Spese mensili totale</div><div class="mvalue num neg">${fmtEUR(totalMonthly)}</div></div>
+    <div class="mini-kpi"><div class="mlabel">Spese annuali totale</div><div class="mvalue num neg">${fmtEUR(totalAnnual)}</div></div>
+    ${savings.length?`<div class="mini-kpi"><div class="mlabel">Risparmi programmati / mese</div><div class="mvalue num" style="color:var(--sage)">${fmtEUR(savingsMonthly)}</div></div>`:''}
+  </div>
+  <div class="card"><h3>Ricorrenti attive</h3>${activeRows}</div>
+  ${savingsSection}
+  ${stoppedSection}`;
 }
 
 /* ============ ANALYTICS ============ */
@@ -877,10 +1020,114 @@ function renderAnalytics(){
     </div>
   </div>
   <div class="card"><h3>Proiezione cashflow futuro</h3>
-    <table class="analysis-table"><thead><tr><th>Ciclo</th><th>Entrate stimate</th><th>Spese fisse</th><th>Netto stimato</th><th>Saldo totale previsto</th></tr></thead><tbody>
-      ${proj.map(r=>`<tr><td>${r.label}</td><td class="num" style="color:var(--sage)">${fmtEUR(r.income)}</td><td class="num" style="color:var(--coral)">${fmtEUR(r.fixed)}</td><td class="num ${r.net>=0?'pos':'neg'}">${fmtEUR(r.net)}</td><td class="num">${fmtEUR(r.balance)}</td></tr>`).join('')}
-    </tbody></table>
-    <div class="empty" style="text-align:left;padding-bottom:0">La proiezione usa la media dello stipendio degli ultimi cicli come entrata ricorrente (bonus e altre entrate una tantum non vengono proiettate). Le spese fisse/ricorrenti sono convertite in equivalente mensile.</div>
+    ${(()=>{
+      const hasSavings=proj.some(r=>r.savings>0);
+      const th=hasSavings?`<th>Risparmi prog.</th>`:'';
+      const netLabel=hasSavings?'Netto libero':'Netto stimato';
+      const rows=proj.map(r=>{
+        const savCol=hasSavings?`<td class="num" style="color:var(--sage)">−${fmtEUR(r.savings)}</td>`:'';
+        return `<tr><td>${r.label}</td><td class="num" style="color:var(--sage)">${fmtEUR(r.income)}</td><td class="num" style="color:var(--coral)">−${fmtEUR(r.fixed)}</td>${savCol}<td class="num ${r.net>=0?'pos':'neg'}">${fmtEUR(r.net)}</td><td class="num">${fmtEUR(r.balance)}</td></tr>`;
+      }).join('');
+      return `<table class="analysis-table"><thead><tr><th>Ciclo</th><th>Entrate stimate</th><th>Spese fisse</th>${th}<th>${netLabel}</th><th>Saldo totale previsto</th></tr></thead><tbody>${rows}</tbody></table>`;
+    })()}
+    <div class="empty" style="text-align:left;padding-bottom:0">La proiezione usa la media dello stipendio degli ultimi cicli. <b>Netto libero</b> = entrate − spese fisse − risparmi programmati. <b>Saldo totale</b> non scende per i risparmi (il denaro resta nel patrimonio, si sposta tra conti).</div>
+  </div>
+  ${(()=>{
+    const prev=prevCycleBounds();
+    if(!prev) return `<div class="card" style="margin-top:16px"><h3>Confronto ciclo corrente vs ciclo precedente</h3><div class="empty">Dati insufficienti: registra almeno due cicli di stipendio per visualizzare il confronto.</div></div>`;
+    const prevTxs=txForDashboardAccount(txInBounds(prev),selectedAccount);
+    const prevByCat=spentByCategory(prevTxs);
+    const curByCat=spentByCategory(txs);
+    const allCats=[...new Set([...Object.keys(curByCat),...Object.keys(prevByCat)])].sort((a,b)=>(curByCat[b]||0)-(curByCat[a]||0));
+    if(!allCats.length) return `<div class="card" style="margin-top:16px"><h3>Confronto ciclo corrente vs ciclo precedente</h3><div class="empty">Nessuna uscita in entrambi i cicli per il conto selezionato.</div></div>`;
+    const prevLabel=periodLabelFromBounds(prev);
+    const curLabel=periodLabelFromBounds(dash.bounds);
+    const rows=allCats.map(cat=>{
+      const cur=curByCat[cat]||0, prv=prevByCat[cat]||0;
+      const diff=cur-prv;
+      const pct=prv>0?((diff/prv)*100):null;
+      const arrow=diff>0?'▲':'▼';
+      const color=diff>0?'var(--coral)':'var(--sage)';
+      const pctStr=pct!==null?`${arrow} ${Math.abs(pct).toFixed(0)}%`:arrow;
+      return `<tr><td>${catIcon(cat)} ${escapeHTML(cat)}</td><td class="num">${fmtEUR(cur)}</td><td class="num" style="color:var(--cream-dim)">${fmtEUR(prv)}</td><td class="num" style="color:${color}">${diff===0?'—':`${diff>0?'+':''}${fmtEUR(diff)} <span style="font-size:11px">${pctStr}</span>`}</td></tr>`;
+    });
+    const totCur=Object.values(curByCat).reduce((s,v)=>s+v,0);
+    const totPrv=Object.values(prevByCat).reduce((s,v)=>s+v,0);
+    const totDiff=totCur-totPrv;
+    const totColor=totDiff>0?'var(--coral)':'var(--sage)';
+    const totPct=totPrv>0?` (${totDiff>0?'+':''}${((totDiff/totPrv)*100).toFixed(0)}%)`:'';
+    return `<div class="card" style="margin-top:16px"><h3>Confronto ciclo corrente vs ciclo precedente</h3>
+      <table class="analysis-table cmp-table">
+        <thead><tr><th>Categoria</th><th class="num">${escapeHTML(curLabel)}</th><th class="num">${escapeHTML(prevLabel)}</th><th class="num">Variazione</th></tr></thead>
+        <tbody>${rows.join('')}</tbody>
+        <tfoot><tr><td><b>Totale uscite</b></td><td class="num"><b>${fmtEUR(totCur)}</b></td><td class="num" style="color:var(--cream-dim)">${fmtEUR(totPrv)}</td><td class="num" style="color:${totColor}"><b>${totDiff===0?'—':`${totDiff>0?'+':''}${fmtEUR(totDiff)}${totPct}`}</b></td></tr></tfoot>
+      </table>
+    </div>`;
+  })()}`;
+}
+
+/* ============ CALENDAR ============ */
+function renderCalendar(){
+  const year=calViewYear, month=calViewMonth;
+  const monthName=new Date(year,month,1).toLocaleDateString('it-IT',{month:'long',year:'numeric'});
+  const firstDow=(new Date(year,month,1).getDay()+6)%7; // lun=0
+  const daysInMonth=new Date(year,month+1,0).getDate();
+  const today=new Date(); const todayKey=`${today.getFullYear()}-${today.getMonth()}-${today.getDate()}`;
+
+  // Salary dates that fall in this month
+  const salaryCells=new Set();
+  salaryDates().forEach(d=>{ if(d.getFullYear()===year&&d.getMonth()===month) salaryCells.add(d.getDate()); });
+  // Estimated salary day if none recorded
+  if(!salaryCells.size && state.settings.salaryDay) salaryCells.add(clampDay(year,month,state.settings.salaryDay));
+
+  // Recurring expenses mapped to their days
+  const expByDay={};
+  fixedExpenses().forEach(f=>{
+    recurringDaysInMonth(f,year,month).forEach(day=>{
+      if(!expByDay[day]) expByDay[day]=[];
+      expByDay[day].push(f);
+    });
+  });
+
+  const DAY_NAMES=['Lun','Mar','Mer','Gio','Ven','Sab','Dom'];
+  let cells='';
+  const totalCells=firstDow+daysInMonth;
+  for(let i=0;i<totalCells+(7-totalCells%7)%7;i++){
+    const day=i-firstDow+1;
+    const isEmpty=day<1||day>daysInMonth;
+    if(isEmpty){ cells+=`<div class="cal-cell cal-empty"></div>`; continue; }
+    const isToday=`${year}-${month}-${day}`===todayKey;
+    const hasSalary=salaryCells.has(day);
+    const exps=expByDay[day]||[];
+    const dayTotal=exps.reduce((s,f)=>s+f.amount,0);
+    cells+=`<div class="cal-cell${isToday?' cal-today':''}">
+      <div class="cal-day-num${hasSalary?' cal-salary-num':''}">${day}</div>
+      ${hasSalary?`<div class="cal-event cal-ev-salary">💰 Stipendio</div>`:''}
+      ${exps.slice(0,3).map(f=>`<div class="cal-event cal-ev-exp" title="${escapeHTML(f.payee)}">${catIcon(f.category)} ${escapeHTML(f.payee.length>10?f.payee.slice(0,9)+'…':f.payee)}</div>`).join('')}
+      ${exps.length>3?`<div class="cal-event cal-ev-more">+${exps.length-3} altro</div>`:''}
+      ${dayTotal>0?`<div class="cal-day-total num">−${fmtEUR(dayTotal)}</div>`:''}
+    </div>`;
+  }
+
+  return `
+  <div class="topbar">
+    <h1>Calendario finanziario</h1>
+    <div class="month-switch">
+      <button id="calPrev">‹</button>
+      <div class="label">${monthName.charAt(0).toUpperCase()+monthName.slice(1)}</div>
+      <button id="calNext">›</button>
+    </div>
+  </div>
+  <div class="card">
+    <div class="cal-legend">
+      <span class="cal-ev-salary cal-ev-sample">💰 Stipendio</span>
+      <span class="cal-ev-exp cal-ev-sample">🔸 Spesa ricorrente</span>
+      <span style="color:var(--cream-dim);font-size:12px">Le date provengono da <b>ricorrenti attive</b> e stipendio registrato.</span>
+    </div>
+    <div class="cal-grid">
+      ${DAY_NAMES.map(d=>`<div class="cal-head">${d}</div>`).join('')}
+      ${cells}
+    </div>
   </div>`;
 }
 
@@ -942,11 +1189,71 @@ function renderBudget(){
   const budgetCycle=activeDashboardCycle();
   const txs=txInBounds(budgetCycle.bounds);
   const byCat=spentByCategory(txs);
+  // I trasferimenti (es. versamento a Conto Arancio) contano nel budget della categoria assegnata
+  txs.filter(t=>isTransfer(t)&&t.category&&t.category!=='Stipendio').forEach(t=>{
+    byCat[t.category]=(byCat[t.category]||0)+t.amount;
+  });
+
+  // KPI riepilogo budget
+  const totalBudget=Object.values(state.budgets).reduce((s,v)=>s+(parseFloat(v)||0),0);
+  const totalSpent=catNames().filter(c=>c!=='Stipendio').reduce((s,c)=>s+(byCat[c]||0),0);
+  const series=getMonthlySeries(5,0,budgetCycle.year,budgetCycle.month,'all');
+  const salaryPerCycle=series.map(s=>{ const [y,m]=s.key.split('-').map(Number); return txInPeriod(y,m-1).filter(isSalaryTx).reduce((sum,t)=>sum+t.amount,0); }).filter(v=>v>0);
+  const avgSalary=salaryPerCycle.length?salaryPerCycle.reduce((a,b)=>a+b)/salaryPerCycle.length:0;
+  const savingsCommitted=fixedExpenses().filter(f=>f.isSaving).reduce((s,f)=>s+recurringMonthlyEquivalent(f.amount,f.freq),0);
+  const unallocated=avgSalary-totalBudget-savingsCommitted;
+  const budgetResiduo=totalBudget-totalSpent;
+  const budgetPct=totalBudget>0?Math.min(100,totalSpent/totalBudget*100):0;
+
   return `
   <div class="topbar"><h1>Budget</h1><div class="month-switch"><div class="label" title="Ciclo corrente basato sullo stipendio più recente">${periodLabelFromBounds(budgetCycle.bounds)}</div></div></div>
+
+  <div class="card" style="margin-bottom:16px;">
+    <h3>Riepilogo allocazione</h3>
+    <div class="budget-kpi-grid">
+      <div class="budget-kpi">
+        <div class="bk-label">Stipendio medio</div>
+        <div class="bk-value num pos">${fmtEUR(avgSalary)}</div>
+        <div class="bk-sub">media ultimi cicli</div>
+      </div>
+      <div class="budget-kpi">
+        <div class="bk-label">Budget allocato</div>
+        <div class="bk-value num">${fmtEUR(totalBudget)}</div>
+        <div class="bk-sub">${catNames().filter(c=>c!=='Stipendio'&&(state.budgets[c]||0)>0).length} categorie con budget</div>
+      </div>
+      <div class="budget-kpi">
+        <div class="bk-label">Risparmi programmati</div>
+        <div class="bk-value num" style="color:var(--sage)">${fmtEUR(savingsCommitted)}</div>
+        <div class="bk-sub">trasferimenti ricorrenti</div>
+      </div>
+      <div class="budget-kpi ${unallocated<0?'bk-warn':''}">
+        <div class="bk-label">Non allocato</div>
+        <div class="bk-value num ${unallocated>=0?'pos':'neg'}">${fmtEUR(Math.abs(unallocated))}</div>
+        <div class="bk-sub">${unallocated>=0?'liquidità fuori budget':'attenzione: over-allocato'}</div>
+      </div>
+    </div>
+    <div class="budget-kpi-grid" style="margin-top:12px;padding-top:12px;border-top:1px solid var(--line)">
+      <div class="budget-kpi">
+        <div class="bk-label">Speso nel ciclo</div>
+        <div class="bk-value num neg">${fmtEUR(totalSpent)}</div>
+        <div class="bk-sub">su tutte le categorie</div>
+      </div>
+      <div class="budget-kpi">
+        <div class="bk-label">Budget residuo</div>
+        <div class="bk-value num ${budgetResiduo>=0?'pos':'neg'}">${fmtEUR(Math.abs(budgetResiduo))}</div>
+        <div class="bk-sub">${budgetResiduo>=0?'ancora disponibile':'fuori budget totale'}</div>
+      </div>
+      <div class="budget-kpi" style="grid-column:span 2">
+        <div class="bk-label">Utilizzo budget complessivo — ${budgetPct.toFixed(0)}%</div>
+        <div class="catbar-track" style="margin-top:6px"><div class="catbar-fill" style="width:${budgetPct}%;background:${budgetPct>=100?'var(--coral)':budgetPct>=80?'var(--amber)':'var(--sage)'}"></div></div>
+        <div class="bk-sub" style="margin-top:4px">${fmtEUR(totalSpent)} spesi su ${fmtEUR(totalBudget)} pianificati</div>
+      </div>
+    </div>
+  </div>
+
   <div class="card" style="margin-bottom:16px;">
     <h3>Ciclo budget dinamico</h3>
-    <div class="empty" style="text-align:left;padding:0;">Il budget viene calcolato automaticamente dalla data dello <strong>Stipendio più recente registrato</strong> fino al giorno prima dello stipendio successivo. Ciclo corrente: <strong>${periodLabelFromBounds(budgetCycle.bounds)}</strong>. Se non esiste ancora nessuno stipendio registrato, l'app usa temporaneamente il mese selezionato.</div>
+    <div class="empty" style="text-align:left;padding:0;">Il budget viene calcolato dalla data dello <strong>Stipendio più recente</strong> fino al giorno prima del successivo. Ciclo corrente: <strong>${periodLabelFromBounds(budgetCycle.bounds)}</strong>.</div>
   </div>
   ${alertsHTML(budgetCycle.year,budgetCycle.month)}
   <div class="card budget-table">
@@ -1294,6 +1601,8 @@ function render(){
     else if(currentPage==='categories') main.innerHTML=renderCategories();
     else if(currentPage==='cloud') main.innerHTML=renderCloud();
     else if(currentPage==='help') main.innerHTML=renderHelp();
+    else if(currentPage==='subscriptions') main.innerHTML=renderSubscriptions();
+    else if(currentPage==='calendar') main.innerHTML=renderCalendar();
     else if(currentPage==='feedback') main.innerHTML=renderFeedback();
     bindPageEvents();
   }catch(e){
@@ -1636,6 +1945,12 @@ function bindPageEvents(){
     const [y,m]=target.split('-').map(Number); viewYear=y; viewMonth=m-1; render();
   });
 
+  // calendar navigation
+  const calPrevBtn=document.getElementById('calPrev');
+  if(calPrevBtn) calPrevBtn.addEventListener('click',()=>{ calViewMonth--; if(calViewMonth<0){calViewMonth=11;calViewYear--;} render(); });
+  const calNextBtn=document.getElementById('calNext');
+  if(calNextBtn) calNextBtn.addEventListener('click',()=>{ calViewMonth++; if(calViewMonth>11){calViewMonth=0;calViewYear++;} render(); });
+
   // alert dismiss
   document.querySelectorAll('[data-dismiss]').forEach(b=>b.addEventListener('click',()=>dismissAlert(b.dataset.dismiss)));
 
@@ -1905,7 +2220,7 @@ function openTransactionModal(txId=null){
         <div class="cat-pick" id="catPick">${catNames().map(c=>`<div class="cat-chip ${c===formCategory?'active':''}" data-cat="${c}">${catIcon(c)} ${c}</div>`).join('')}</div>
       </div>
       <div class="recurrence-box">
-        <label class="checkline"><input type="checkbox" id="fRecurring" ${isRecurring?'checked':''}> Questa uscita è ricorrente / fissa</label>
+        <label class="checkline"><input type="checkbox" id="fRecurring" ${isRecurring?'checked':''}> <span id="recurringLabel">${isTransferFlag?'Questo risparmio è ricorrente (es. mensile)':'Questa uscita è ricorrente / fissa'}</span></label>
         <div id="recFields" style="display:${isRecurring?'block':'none'};margin-top:12px;">
           <div class="frow"><div class="field"><label>Frequenza</label><select id="fRecFreq"><option ${existing&&existing.recurringFreq==='Mensile'?'selected':''}>Mensile</option><option ${existing&&existing.recurringFreq==='Settimanale'?'selected':''}>Settimanale</option><option ${existing&&existing.recurringFreq==='Bimestrale'?'selected':''}>Bimestrale</option><option ${existing&&existing.recurringFreq==='Annuale'?'selected':''}>Annuale</option></select></div><div class="field"><label>Prossima data</label><input type="date" id="fRecNext" value="${existing&&existing.recurringNextDate?existing.recurringNextDate:addDays(isoToday(),30)}"></div></div>
         </div>
@@ -1923,7 +2238,7 @@ function openTransactionModal(txId=null){
   document.getElementById('typeOut').addEventListener('click',()=>setType('out'));
   document.getElementById('typeIn').addEventListener('click',()=>setType('in'));
   document.getElementById('fRecurring').addEventListener('change',e=>{ isRecurring=e.target.checked; document.getElementById('recFields').style.display=isRecurring?'block':'none'; });
-  document.getElementById('fTransfer').addEventListener('change',e=>{ isTransferFlag=e.target.checked; document.getElementById('transferFields').style.display=isTransferFlag?'block':'none'; if(isTransferFlag){ setType('out'); const chip=[...document.querySelectorAll('#catPick .cat-chip')].find(c=>c.dataset.cat==='Risparmi'); if(chip) chip.click(); } });
+  document.getElementById('fTransfer').addEventListener('change',e=>{ isTransferFlag=e.target.checked; document.getElementById('transferFields').style.display=isTransferFlag?'block':'none'; document.getElementById('recurringLabel').textContent=isTransferFlag?'Questo risparmio è ricorrente (es. mensile)':'Questa uscita è ricorrente / fissa'; if(isTransferFlag){ setType('out'); const chip=[...document.querySelectorAll('#catPick .cat-chip')].find(c=>c.dataset.cat==='Risparmi'); if(chip) chip.click(); } });
   document.querySelectorAll('#catPick .cat-chip').forEach(chip=>chip.addEventListener('click',()=>{ formCategory=chip.dataset.cat; document.querySelectorAll('#catPick .cat-chip').forEach(c=>c.classList.remove('active')); chip.classList.add('active'); }));
   document.getElementById('saveAdd').addEventListener('click',()=>{
     const amount=parseFloat(document.getElementById('fAmount').value);
@@ -1933,7 +2248,7 @@ function openTransactionModal(txId=null){
     const transferTo=isTransferFlag?document.getElementById('fTransferTo').value:'';
     if(!amount||amount<=0){ toast('Inserisci un importo valido'); return; }
     if(isTransferFlag&&transferTo===account){ toast('Scegli un conto destinazione diverso'); return; }
-    const tx={id:existing?existing.id:uid(),date,account,category:formCategory,payee,amount,type:formType,movementType:isTransferFlag?'transfer':'standard',transferTo:transferTo||null,goalId:isTransferFlag?document.getElementById('fGoal').value||null:null,recurring:isRecurring&&!isTransferFlag,recurringFreq:isRecurring?document.getElementById('fRecFreq').value:null,recurringNextDate:isRecurring?document.getElementById('fRecNext').value:null};
+    const tx={id:existing?existing.id:uid(),date,account,category:formCategory,payee,amount,type:formType,movementType:isTransferFlag?'transfer':'standard',transferTo:transferTo||null,goalId:isTransferFlag?document.getElementById('fGoal').value||null:null,recurring:isRecurring,recurringFreq:isRecurring?document.getElementById('fRecFreq').value:null,recurringNextDate:isRecurring?document.getElementById('fRecNext').value:null};
     if(existing){ Object.assign(existing,tx); }
     else { state.transactions.push(tx); }
     saveState(); closeModal(); render(); toast(existing?'Movimento aggiornato':(isTransferFlag?'Trasferimento aggiunto':'Movimento aggiunto'));
@@ -2126,7 +2441,7 @@ function migrateState(){
   if(!state.goals) state.goals=[];
   if(!state.settings) state.settings={};
   if(state.settings.dashboardShowBalances===undefined) state.settings.dashboardShowBalances=true;
-  if(!state.settings.dashboardAccountId && state.accounts[0]) state.settings.dashboardAccountId=state.accounts[0].id;
+  if(state.settings.dashboardAccountId===undefined) state.settings.dashboardAccountId='all';
   if(!state.stoppedRecurrings) state.stoppedRecurrings=[];
   if(state.tutorialSeen===undefined) state.tutorialSeen=false;
   if(!state.merchantMappings) state.merchantMappings={};

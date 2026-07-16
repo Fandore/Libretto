@@ -1,3 +1,91 @@
+16/07/2026 — Sessione 12b: Fix dashboard filtro conto (v22.11) — LIVE ✅
+SAL:
+- Bug fix: selectedDashboardAccountId() non gestiva il valore 'all' → selezionando "Tutti i conti"
+  ricadeva sempre sul primo conto (state.accounts.some(a=>a.id==='all') === false)
+- Fix: aggiunto guard `if(id==='all') return 'all'` prima del check sugli account
+- Default cambiato da primo conto a 'all' (migrateState: dashboardAccountId='all' se undefined)
+- accountBalancesCardHTML() ora appare solo quando selectedAccount==='all' (ridondante su conto singolo)
+- APP_VERSION: 22.11-dashboard-fix
+
+16/07/2026 — Sessione 12: Rischedule mail riepilogo — LIVE ✅
+SAL:
+- Spostati orari invio mail per dare tempo di inserire le ultime spese:
+  - Settimanale: lunedì 08:00 UTC → martedì 08:00 UTC (10:00 IT) — cron: 0 8 * * 2
+  - Riepilogo mensile: 1° del mese 08:00 UTC → 5° del mese 08:00 UTC — cron: 0 8 5 * *
+  - Promemoria scadenze: 1° del mese 07:00 UTC → 5° del mese 07:00 UTC — cron: 0 7 5 * *
+- cron_setup.sql aggiornato con le nuove schedule + sezione "AGGIORNAMENTO SCHEDULE" con i comandi unschedule/reschedule
+- Job aggiornati live via SQL Editor (unschedule + reschedule confermati con select * from cron.job)
+- Pendente: deploy send-monthly-reminder (prima esecuzione live sarà il 5/08/2026)
+
+15/07/2026 — Sessione 11c: Mail promemoria scadenze mensili — IMPLEMENTATO (deploy manuale richiesto)
+SAL:
+- Nuova Edge Function send-monthly-reminder (supabase/functions/send-monthly-reminder/index.ts)
+  - Si attiva ogni 1° del mese alle 07:00 UTC (un'ora prima del riepilogo send-report)
+  - Per ogni utente: legge transactions con recurring:true dallo state Supabase
+  - Proietta le scadenze nel mese corrente con la stessa logica di recurringDaysInMonth() dell'app:
+    * Mensile: giorno da recurringNextDate o dalla data originale della transazione
+    * Settimanale: itera di 7 giorni da nextDate per trovare tutte le occorrenze nel mese
+    * Bimestrale/Annuale: verifica allineamento con nextDate; non include se il mese non batte
+    * Deduplication: chiave payee|category|tipo (prende solo la più recente per combinazione)
+  - Separa uscite (type=out) e risparmi (movementType=transfer) in sezioni distinte
+  - Calcola stipendio medio (ultimi 3 isSalaryTx) per mostrare il disponibile
+  - HTML email: 4 card summary (Stipendio / Uscite fisse / Risparmi / Disponibile netto)
+    + tabella uscite con giorno/descrizione/categoria/freq/importo + sezione risparmi verde
+    + box colorato con importo disponibile stimato
+- cron_setup.sql: aggiunto job 'libretto-monthly-reminder' (0 7 1 * *)
+  + entry test manuale e unschedule per il nuovo job
+- note/ChatGPT_requests.txt: feature 6 aggiornata con nota v22.10
+
+DEPLOY manuale richiesto:
+  supabase functions deploy send-monthly-reminder --project-ref marvmbewsgxrabirugkk
+  Poi eseguire in Supabase SQL Editor il nuovo select cron.schedule('libretto-monthly-reminder', ...)
+
+15/07/2026 — Sessione 11b: Risparmi programmati nelle proiezioni (v22.10) — LIVE ✅
+SAL:
+- fixedExpenses(): include ora i trasferimenti con recurring=true come {isSaving:true}
+  - Chiave deduplicazione: payee|account|saving (separata da spese normali)
+  - Importo: non usa avgLastNAmounts (non è una spesa variabile, è sempre lo stesso importo)
+- fixedExpensesForMonthSplit(projDate): nuovo helper che restituisce {expenses, savings}
+  - Stessa logica di fixedExpensesForMonth ma biforcata per isSaving
+- projectionRows(): ora usa split; saldo totale cresce solo di (income-expenses) perché il
+  risparmio resta in patrimonio; netFree = income-expenses-savings = liquidità vera
+  - Colonna "net" nel row = netFree (cambiamento semantico, era income-fixed)
+  - Colonna "balance" = patrimonio totale (corretto, non influenzato dai risparmi)
+- renderAnalytics() tabella proiezione: colonna "Risparmi prog." aggiunta condizionalmente
+  (appare solo se almeno un trasferimento ricorrente è presente). Label "Netto libero" invece
+  di "Netto stimato" quando ci sono risparmi. Note esplicativa sotto la tabella.
+- renderSubscriptions(): sezione "🏦 Risparmi programmati" separata con tabella sage-colored
+  + KPI quarto "Risparmi programmati / mese"
+- recurringSummaryHTML() dashboard: sezione risparmi in fondo alla card ricorrenti
+- CSS: .sub-saving-payee (sage), .sub-savings-note (box verde trasparente con bordo sage)
+- APP_VERSION: 22.10-savings
+
+15/07/2026 — Sessione 11: Abbonamenti (F12) + Confronto cicli (F13) + Calendario (F14) (v22.9) — LIVE ✅
+SAL:
+- Feature 12 — renderSubscriptions() (pagina "🔁 Abbonamenti"):
+  - KPI row: ricorrenti attive / costo mensile totale / costo annuale totale
+  - Tabella ricorrenti attive: esercente, categoria, frequenza badge, importo, ≈/mese, ≈/anno, prossima data, pulsante ⏹ Stop
+  - Sezione ricorrenti sospese con pulsante ▶ Riattiva (riusa data-stop-rec / bindPageEvents esistente)
+  - Dati da fixedExpenses() + stoppedRecurringsDetails(); importi mensili via recurringMonthlyEquivalent()
+- Feature 13 — Confronto ciclo corrente vs ciclo precedente (in fondo a renderAnalytics()):
+  - Tabella per categoria: spesa ciclo corrente | spesa ciclo precedente | Δ€ con % freccia ▲▼
+  - Riga totale in <tfoot> con totale uscite e variazione %
+  - Usa prevCycleBounds() (aggiunto sessione 10) + txInBounds() + spentByCategory()
+  - Graceful degradation: se meno di 2 stipendi registrati mostra messaggio informativo
+- Feature 14 — renderCalendar() (pagina "📅 Calendario"):
+  - Griglia 7 colonne (Lun–Dom), navigazione prev/next mese con calViewYear/calViewMonth
+  - Giorno stipendio: numero verde + event card "💰 Stipendio" (da salaryDates() o settings.salaryDay)
+  - Spese ricorrenti per giorno: date calcolate da recurringDaysInMonth() per tutte fixedExpenses()
+  - Totale giornaliero in basso a destra di ogni cella, al massimo 3 event card + "+N altro"
+  - Oggi evidenziato con bordo gold
+- Navigazione sidebar: aggiunti 🔁 Abbonamenti e 📅 Calendario tra Analisi e Obiettivi (index.html)
+- render(): aggiunti case 'subscriptions' e 'calendar'
+- bindPageEvents(): aggiunti handler calPrev/calNext
+- APP_VERSION: 22.9-features | WHATS_NEW: messaggio per le 3 nuove sezioni
+- CSS: .sub-table-wrap, .sub-table, .sub-payee, .sub-freq, .sub-stop-btn, .cmp-table tfoot,
+       .cal-grid, .cal-cell, .cal-head, .cal-day-num, .cal-event, .cal-ev-salary, .cal-ev-exp,
+       .cal-ev-more, .cal-day-total, .cal-legend, responsive overrides @760px
+
 15/07/2026 — Sessione 10: Parser IsyBank + "Novità" banner (v22.8) — LIVE ✅
 SAL:
 - Aggiunto formato IsyBank in src/bankImport.js:
