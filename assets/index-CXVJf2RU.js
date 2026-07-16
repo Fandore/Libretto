@@ -356,9 +356,9 @@
         </div>`).join(``)}
     </div>
   </div>`}function __(){return!!(J.travel&&J.travel.active)}function v_(){return(J.transactions||[]).filter(e=>e.travelTag)}function y_(){let e={};return v_().filter(e=>e.type===`out`&&!_(e)).forEach(t=>{e[t.category]=(e[t.category]||0)+t.amount}),e}function b_(){return v_().filter(e=>e.type===`out`&&!_(e)).reduce((e,t)=>e+t.amount,0)}function x_(){J.categories.some(e=>e.name===`Viaggi`)||J.categories.push({name:`Viaggi`,icon:`✈️`,color:`#5fb3c9`});let e=J.travel.name||`Viaggio`,t={};v_().filter(e=>e.type===`out`&&!_(e)).forEach(e=>{t[e.account]=(t[e.account]||0)+e.amount});let n=Object.values(t).reduce((e,t)=>e+t,0);J.transactions=J.transactions.filter(e=>!e.travelTag),Object.entries(t).forEach(([t,n])=>{n>0&&J.transactions.push({id:i(),date:a(),account:t,category:`Viaggi`,payee:e,amount:n,type:`out`,movementType:`standard`,recurring:!1,recurringFreq:null,recurringNextDate:null})}),J.travel={...J.travel,active:!1,endDate:a()},ag(),X(),Z(`Viaggio "${e}" terminato · ${s(n)} → Viaggi`)}function S_(){let e=J.travel;if(!e||!e.active){let t=lh().filter(e=>e!==`Stipendio`&&e!==`Risparmi`).map(t=>`
-      <div class="frow" style="align-items:center;margin-bottom:6px;">
-        <label style="flex:1;font-size:13px;">${sh(t)} ${t}</label>
-        <input type="number" class="travel-budget-input" data-cat="${l(t)}" step="0.01" min="0" placeholder="—" value="${l(String(e?.categoryBudgets?.[t]||``))}" style="width:100px;text-align:right;">
+      <div class="tbt">
+        <div class="tbt-label">${sh(t)} ${l(t)}</div>
+        <input type="number" class="travel-budget-input" data-cat="${l(t)}" step="1" min="0" placeholder="—" value="${l(String(e?.categoryBudgets?.[t]||``))}">
       </div>`).join(``);return`
     <div class="topbar"><h1>✈️ Modalità Viaggio</h1></div>
     ${e?`<div class="card" style="margin-bottom:16px;"><h3>Ultimo viaggio</h3>
@@ -366,13 +366,16 @@
     </div>`:``}
     <div class="card">
       <h3>Inizia un nuovo viaggio</h3>
-      <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">Le spese del viaggio non impattano Budget e Analisi, e vengono collassate in "Viaggi" alla fine.</p>
-      <div class="field"><label>Nome del viaggio</label><input type="text" id="travelName" placeholder="es. Barcellona 2026, Weekend Roma…"></div>
-      <div class="field"><label>Data inizio</label><input type="date" id="travelStart" value="${a()}"></div>
-      <details style="margin-top:4px;"><summary style="cursor:pointer;font-size:13px;color:var(--muted);padding:6px 0;">Budget per categoria (opzionale)</summary>
-        <div style="margin-top:10px;">${t}</div>
-      </details>
-      <div class="modal-actions" style="margin-top:16px;"><button class="btn" id="startTravelBtn">✈️ Inizia viaggio</button></div>
+      <p style="font-size:13px;color:var(--cream-dim);margin-bottom:20px;">Le spese del viaggio non impattano Budget e Analisi, e vengono collassate in "Viaggi" alla fine.</p>
+      <div class="frow">
+        <div class="field" style="flex:2"><label>Nome del viaggio</label><input type="text" id="travelName" placeholder="es. Barcellona 2026, Weekend Roma…"></div>
+        <div class="field"><label>Data inizio</label><input type="date" id="travelStart" value="${a()}"></div>
+      </div>
+      <div class="travel-budget-section">
+        <div class="travel-budget-header">Budget per categoria <span style="font-size:11px;opacity:.6">(opzionale — lascia vuoto per non usarlo)</span></div>
+        <div class="tbt-grid">${t}</div>
+      </div>
+      <div class="modal-actions" style="margin-top:20px;"><button class="btn" id="startTravelBtn" style="width:100%;justify-content:center;">✈️ Inizia viaggio</button></div>
     </div>`}let t=Math.max(1,Math.floor((Date.now()-new Date(e.startDate).getTime())/864e5)+1),n=y_(),r=b_(),i=e.categoryBudgets||{},o=Object.values(i).reduce((e,t)=>e+(parseFloat(t)||0),0),c=v_().filter(e=>e.type===`out`&&!_(e)).sort((e,t)=>t.date.localeCompare(e.date)),u=Object.entries(n).sort(([,e],[,t])=>t-e).map(([e,t])=>{let n=parseFloat(i[e]||0),r=n>0?Math.min(100,t/n*100):0,a=r>100?`var(--coral)`:r>80?`#e0975c`:`var(--sage)`;return`<div class="catbar-row">
       <div class="catbar-top"><div class="nm">${sh(e)} ${e}</div><div class="amt num">${s(t)}${n>0?` <span style="color:${a};font-size:11px;">${r.toFixed(0)}%</span>`:``}</div></div>
       ${n>0?`<div class="catbar-track"><div class="catbar-fill" style="width:${r.toFixed(0)}%;background:${a}"></div></div>`:``}</div>`}).join(``),d=c.slice(0,25).map(e=>`<div class="rec-item"><div><div class="nm">${sh(e.category)} ${l(e.payee||`—`)}</div><div class="freq">${e.date} · ${e.category}</div></div><div class="num neg">-${s(e.amount)}</div></div>`).join(``),f=o>0?`<div class="mini-kpi"><div class="mlabel">Budget totale</div><div class="mvalue num ${r>o?`neg`:`pos`}">${s(o-r)} ${r>o?`sforato`:`rimasto`}</div><div class="sync-note">${s(r)} / ${s(o)}</div></div>`:``;return`
