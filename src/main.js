@@ -1389,10 +1389,10 @@ function terminateTravel(){
 function renderTravel(){
   const travel=state.travel;
   if(!travel || !travel.active){
-    const catOpts=catNames().filter(c=>c!=='Stipendio'&&c!=='Risparmi').map(c=>`
-      <div class="frow" style="align-items:center;margin-bottom:6px;">
-        <label style="flex:1;font-size:13px;">${catIcon(c)} ${c}</label>
-        <input type="number" class="travel-budget-input" data-cat="${escapeHTML(c)}" step="0.01" min="0" placeholder="—" value="${escapeHTML(String(travel?.categoryBudgets?.[c]||''))}" style="width:100px;text-align:right;">
+    const catTiles=catNames().filter(c=>c!=='Stipendio'&&c!=='Risparmi').map(c=>`
+      <div class="tbt">
+        <div class="tbt-label">${catIcon(c)} ${escapeHTML(c)}</div>
+        <input type="number" class="travel-budget-input" data-cat="${escapeHTML(c)}" step="1" min="0" placeholder="—" value="${escapeHTML(String(travel?.categoryBudgets?.[c]||''))}">
       </div>`).join('');
     const pastTrip=travel?`<div class="card" style="margin-bottom:16px;"><h3>Ultimo viaggio</h3>
       <div class="rec-item"><div><div class="nm">✈️ ${escapeHTML(travel.name||'—')}</div><div class="freq">${travel.startDate||'—'} → ${travel.endDate||'in corso'}</div></div></div>
@@ -1402,13 +1402,16 @@ function renderTravel(){
     ${pastTrip}
     <div class="card">
       <h3>Inizia un nuovo viaggio</h3>
-      <p style="font-size:13px;color:var(--muted);margin-bottom:16px;">Le spese del viaggio non impattano Budget e Analisi, e vengono collassate in "Viaggi" alla fine.</p>
-      <div class="field"><label>Nome del viaggio</label><input type="text" id="travelName" placeholder="es. Barcellona 2026, Weekend Roma…"></div>
-      <div class="field"><label>Data inizio</label><input type="date" id="travelStart" value="${isoToday()}"></div>
-      <details style="margin-top:4px;"><summary style="cursor:pointer;font-size:13px;color:var(--muted);padding:6px 0;">Budget per categoria (opzionale)</summary>
-        <div style="margin-top:10px;">${catOpts}</div>
-      </details>
-      <div class="modal-actions" style="margin-top:16px;"><button class="btn" id="startTravelBtn">✈️ Inizia viaggio</button></div>
+      <p style="font-size:13px;color:var(--cream-dim);margin-bottom:20px;">Le spese del viaggio non impattano Budget e Analisi, e vengono collassate in "Viaggi" alla fine.</p>
+      <div class="frow">
+        <div class="field" style="flex:2"><label>Nome del viaggio</label><input type="text" id="travelName" placeholder="es. Barcellona 2026, Weekend Roma…"></div>
+        <div class="field"><label>Data inizio</label><input type="date" id="travelStart" value="${isoToday()}"></div>
+      </div>
+      <div class="travel-budget-section">
+        <div class="travel-budget-header">Budget per categoria <span style="font-size:11px;opacity:.6">(opzionale — lascia vuoto per non usarlo)</span></div>
+        <div class="tbt-grid">${catTiles}</div>
+      </div>
+      <div class="modal-actions" style="margin-top:20px;"><button class="btn" id="startTravelBtn" style="width:100%;justify-content:center;">✈️ Inizia viaggio</button></div>
     </div>`;
   }
   const days=Math.max(1,Math.floor((Date.now()-new Date(travel.startDate).getTime())/86400000)+1);

@@ -335,6 +335,17 @@ canvas.lib-chart{width:100%;height:260px;display:block;background:rgba(255,255,2
 .cal-day-total{font-size:10px;color:var(--coral);margin-top:auto;text-align:right;padding-top:2px;}
 @media(max-width:760px){.cal-cell{min-height:60px;padding:4px 3px 3px;}.cal-event{font-size:9.5px;padding:1px 3px;}.cal-day-num{font-size:11px;}.sub-table thead th:nth-child(5),.sub-table td:nth-child(5),.sub-table thead th:nth-child(6),.sub-table td:nth-child(6){display:none;}}
 
+/* -------- Travel budget grid -------- */
+.travel-budget-section{margin-top:4px;}
+.travel-budget-header{font-size:12px;text-transform:uppercase;letter-spacing:.6px;color:var(--cream-dim);margin-bottom:10px;}
+.tbt-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(120px,1fr));gap:8px;}
+.tbt{background:var(--surface-2);border:1px solid var(--line);border-radius:10px;padding:10px 10px 8px;transition:border-color .15s;}
+.tbt:focus-within{border-color:var(--gold);}
+.tbt-label{font-size:12px;color:var(--cream-dim);margin-bottom:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.tbt input{width:100%;background:var(--surface-3);border:1px solid transparent;border-radius:6px;color:var(--cream);padding:5px 8px;font-size:13px;font-family:'JetBrains Mono',monospace;text-align:right;}
+.tbt input:focus{outline:none;border-color:var(--gold);}
+.tbt input::placeholder{color:var(--cream-dim);opacity:.5;}
+
 /* -------- Travel banner -------- */
 .travel-banner-bar{background:rgba(95,179,201,.12);border-bottom:1px solid rgba(95,179,201,.28);color:var(--cream);font-size:13px;padding:8px 38px;display:flex;align-items:center;gap:6px;flex-wrap:wrap;}
 .travel-banner-bar b{color:#5fb3c9;}
