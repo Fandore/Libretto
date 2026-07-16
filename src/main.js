@@ -210,7 +210,7 @@ function seedTransactions(){
 }
 
 /* ============ PERSISTENCE — STANDALONE BROWSER ============ */
-const APP_VERSION = '22.12-reminders';
+const APP_VERSION = '22.13-sunday-preview';
 // Aggiorna questo testo ad ogni deploy — viene mostrato una volta agli utenti esistenti.
 const WHATS_NEW = '📌 Novità: <b>Reminder nel calendario</b> — aggiungi spese future come promemoria (non impattano i saldi). Clicca + Reminder nel Calendario.';
 const PRECONFIGURED_SUPABASE_URL = 'https://marvmbewsgxrabirugkk.supabase.co';

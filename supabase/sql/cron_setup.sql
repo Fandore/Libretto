@@ -49,6 +49,23 @@ select cron.schedule(
 );
 
 
+-- 6. Anteprima DOMENICALE scadenze settimana — ogni domenica alle 08:00 UTC (10:00 IT estate)
+select cron.schedule(
+  'libretto-sunday-preview',                  -- nome del job
+  '0 8 * * 0',                               -- cron: ogni domenica alle 08:00 UTC
+  $$
+  select extensions.http_post(
+    url     := 'https://marvmbewsgxrabirugkk.supabase.co/functions/v1/send-report',
+    headers := jsonb_build_object(
+      'Content-Type',  'application/json',
+      'Authorization', 'Bearer ' || current_setting('app.cron_secret', true)
+    ),
+    body    := '{"type":"sunday-preview"}'::jsonb
+  ) as request_id;
+  $$
+);
+
+
 -- 5. Promemoria MENSILE scadenze — 5° del mese alle 07:00 UTC (09:00 IT estate)
 --    (un'ora prima del riepilogo mensile, così arriva come "agenda del mese")
 select cron.schedule(
@@ -81,6 +98,7 @@ select cron.schedule(
 -- select cron.unschedule('libretto-weekly-report');
 -- select cron.unschedule('libretto-monthly-report');
 -- select cron.unschedule('libretto-monthly-reminder');
+-- select cron.unschedule('libretto-sunday-preview');
 
 -- AGGIORNAMENTO SCHEDULE (martedì + giorno 5):
 -- I job weekly e monthly-report erano già attivi con le vecchie schedule.
@@ -102,6 +120,16 @@ select cron.schedule(
 --     'Authorization', 'Bearer ' || current_setting('app.cron_secret', true)
 --   ),
 --   body    := '{"type":"monthly"}'::jsonb
+-- ) as request_id;
+
+-- Test manuale anteprima domenicale:
+-- select extensions.http_post(
+--   url     := 'https://marvmbewsgxrabirugkk.supabase.co/functions/v1/send-report',
+--   headers := jsonb_build_object(
+--     'Content-Type',  'application/json',
+--     'Authorization', 'Bearer ' || current_setting('app.cron_secret', true)
+--   ),
+--   body    := '{"type":"sunday-preview"}'::jsonb
 -- ) as request_id;
 
 -- Test manuale del promemoria scadenze:
